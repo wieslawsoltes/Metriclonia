@@ -2,7 +2,8 @@
 
 Metriclonia is a pair of Avalonia desktop applications that demonstrate real-time metric collection and visualization over UDP. The solution contains:
 
-- **Metriclonia.Monitor** – a metrics dashboard that listens for JSON metric samples and renders them on a timeline.
+- **Metriclonia.Monitor** – a reusable library that provides the monitoring infrastructure, view models, and controls.
+- **Metriclonia.Monitor.Desktop** – a desktop host that boots the monitor UI using the shared library.
 - **Metriclonia.Producer** – a sample application that publishes the built-in Avalonia diagnostics metrics to the monitor.
 
 Both projects target .NET 9.0 (see `global.json`) and share a single solution file `Metriclonia.sln`.
@@ -21,7 +22,7 @@ dotnet build Metriclonia.sln
 ## Running the monitor
 
 ```bash
-dotnet run --project Metriclonia.Monitor
+dotnet run --project Metriclonia.Monitor.Desktop
 ```
 
 The monitor binds to UDP port `5005` by default. Override the port by setting `METRICLONIA_METRICS_PORT` before launching:
