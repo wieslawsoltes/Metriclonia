@@ -3,6 +3,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:controls="clr-namespace:Metriclonia.Monitor.Controls"
+        xmlns:viz="clr-namespace:Metriclonia.Monitor.Visualization"
         mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="720"
         x:Class="Metriclonia.Monitor.MainWindow"
         Title="Metriclonia Monitor" MinWidth="1024" MinHeight="720"
@@ -91,6 +92,22 @@
             </TabItem>
             <TabItem Header="Activities">
                 <controls:ActivityView DataContext="{Binding}"/>
+            </TabItem>
+            <TabItem Header="Flame Charts">
+                <TabControl ItemsSource="{x:Static viz:FlameChartDefinitions.All}" Margin="0,0,0,12" Padding="0" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" TabStripPlacement="Left">
+                    <TabControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" Margin="0,4"/>
+                        </DataTemplate>
+                    </TabControl.ItemTemplate>
+                    <TabControl.ContentTemplate>
+                        <DataTemplate>
+                            <Border Margin="12" Padding="12" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="12">
+                                <viz:FlameChartControl Definition="{Binding}" Series="{Binding DataContext.Series, RelativeSource={RelativeSource AncestorType=Window}}" Activities="{Binding DataContext.Activities, RelativeSource={RelativeSource AncestorType=Window}}" VisibleDurationSeconds="{Binding DataContext.VisibleDurationSeconds, RelativeSource={RelativeSource AncestorType=Window}}"/>
+                            </Border>
+                        </DataTemplate>
+                    </TabControl.ContentTemplate>
+                </TabControl>
             </TabItem>
         </TabControl>
     </DockPanel>
