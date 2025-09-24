@@ -30,6 +30,138 @@
                     <Slider Minimum="1" Maximum="180" Value="{Binding VisibleDurationSeconds}" Width="200"/>
                     <TextBlock Text="{Binding VisibleDurationSeconds, StringFormat=\{0:0\} s}"/>
                     <CheckBox Content="Pause capture" IsChecked="{Binding IsRenderingPaused}" VerticalAlignment="Center"/>
+                    <Expander Header="Trigger" Width="420" Padding="8" Background="{DynamicResource ThemeBackgroundBrush}">
+                        <ScrollViewer MaxHeight="240" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel Spacing="8">
+                                <CheckBox Content="Enabled" IsChecked="{Binding TriggerConfiguration.IsEnabled}"/>
+                                <UniformGrid Columns="2" ColumnSpacing="12" RowSpacing="6">
+                                    <StackPanel>
+                                        <TextBlock Text="Mode" FontSize="11" Foreground="Gray"/>
+                                        <ComboBox ItemsSource="{Binding TriggerModes}" SelectedItem="{Binding TriggerConfiguration.Mode}" Width="140"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Type" FontSize="11" Foreground="Gray"/>
+                                        <ComboBox ItemsSource="{Binding TriggerTypes}" SelectedItem="{Binding TriggerConfiguration.Type}" Width="180"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Slope" FontSize="11" Foreground="Gray"/>
+                                        <ComboBox ItemsSource="{Binding TriggerSlopes}" SelectedItem="{Binding TriggerConfiguration.Slope}" Width="140"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Polarity" FontSize="11" Foreground="Gray"/>
+                                        <ComboBox ItemsSource="{Binding TriggerPolarities}" SelectedItem="{Binding TriggerConfiguration.Polarity}" Width="140"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Series" FontSize="11" Foreground="Gray"/>
+                                        <ComboBox ItemsSource="{Binding Series}" SelectedItem="{Binding TriggerConfiguration.TargetSeries}" Width="200">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding DisplayName}"/>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Holdoff (s)" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.HoldoffSeconds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                </UniformGrid>
+                                <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                                    <CheckBox Content="Auto level" IsChecked="{Binding TriggerConfiguration.AutoLevel}"/>
+                                    <StackPanel>
+                                        <TextBlock Text="Position" FontSize="11" Foreground="Gray"/>
+                                        <Slider Minimum="0" Maximum="1" Value="{Binding TriggerConfiguration.HorizontalPosition}" Width="180" TickFrequency="0.1" IsSnapToTickEnabled="True"/>
+                                    </StackPanel>
+                                </StackPanel>
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="12" RowDefinitions="Auto,Auto" RowSpacing="8">
+                                    <StackPanel Grid.Column="0" Grid.Row="0">
+                                        <TextBlock Text="Level" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.Level, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="0">
+                                        <TextBlock Text="Hysteresis" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.Hysteresis, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="0" Grid.Row="1">
+                                        <TextBlock Text="Window Low" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.WindowLow, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="1">
+                                        <TextBlock Text="Window High" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.WindowHigh, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="12" RowDefinitions="Auto,Auto" RowSpacing="8">
+                                    <StackPanel Grid.Column="0" Grid.Row="0">
+                                        <TextBlock Text="Pulse Min (s)" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.MinimumPulseWidthSeconds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="0">
+                                        <TextBlock Text="Pulse Max (s)" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.MaximumPulseWidthSeconds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="0" Grid.Row="1">
+                                        <TextBlock Text="Runt Low" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.RuntLowLevel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="1">
+                                        <TextBlock Text="Runt High" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.RuntHighLevel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="12" RowDefinitions="Auto,Auto" RowSpacing="8">
+                                    <StackPanel Grid.Column="0" Grid.Row="0">
+                                        <TextBlock Text="Logic Pattern" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.LogicPattern, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="200"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="0">
+                                        <TextBlock Text="Logic Samples" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.LogicSampleLength, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="0" Grid.Row="1">
+                                        <TextBlock Text="Pattern Sequence" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.PatternSequence, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="200"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="1">
+                                        <TextBlock Text="Pattern Tol" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.PatternTolerance, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="12" RowDefinitions="Auto,Auto" RowSpacing="8">
+                                    <StackPanel Grid.Column="0" Grid.Row="0">
+                                        <TextBlock Text="Serial Bits" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.SerialBitCount, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="0">
+                                        <TextBlock Text="Serial Baud" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.SerialBaudRate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="0" Grid.Row="1">
+                                        <TextBlock Text="Serial Threshold" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.SerialThreshold, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="1">
+                                        <TextBlock Text="Video Line Hz" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.VideoLineFrequency, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="12" RowDefinitions="Auto,Auto" RowSpacing="8">
+                                    <StackPanel Grid.Column="0" Grid.Row="0">
+                                        <TextBlock Text="Video Tol" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.VideoTolerancePercentage, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Grid.Row="0">
+                                        <TextBlock Text="Visual Template" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.VisualTemplate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="220"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="0" Grid.Row="1">
+                                        <TextBlock Text="Visual Tol" FontSize="11" Foreground="Gray"/>
+                                        <TextBox Text="{Binding TriggerConfiguration.VisualTolerance, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, StringFormat=\{0:G\}}" Width="120"/>
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Expander>
                 </StackPanel>
             </Grid>
         </Border>

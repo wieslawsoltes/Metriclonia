@@ -31,6 +31,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
     private readonly ColorPalette _palette = new();
     private readonly ColorPalette _activityPalette = new();
     private readonly EventHandler _flushHandler;
+    private readonly TriggerConfiguration _triggerConfiguration = new();
     private static readonly MetricSeed[] SeedMetrics =
     {
         new("Avalonia.Diagnostic.Meter", "avalonia.comp.render.time", "Histogram", "ms", "Duration of the compositor render pass on render thread", "Double"),
@@ -80,6 +81,8 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         _flushTimer.Start();
         Logger.LogDebug("Flush timer started with interval {Interval}ms", _flushTimer.Interval.TotalMilliseconds);
 
+        _series.CollectionChanged += OnSeriesCollectionChanged;
+
         SeedKnownMetricSeries();
         SeedKnownActivitySeries();
     }
@@ -89,6 +92,8 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
     public ObservableCollection<ActivitySeries> Activities => _activities;
 
     public int ListeningPort { get; }
+
+    public TriggerConfiguration TriggerConfiguration => _triggerConfiguration;
 
     public double VisibleDurationSeconds
     {
@@ -136,6 +141,14 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
             }
         }
     }
+
+    public Array TriggerModes => Enum.GetValues(typeof(TriggerMode));
+
+    public Array TriggerTypes => Enum.GetValues(typeof(TriggerType));
+
+    public Array TriggerSlopes => Enum.GetValues(typeof(TriggerSlope));
+
+    public Array TriggerPolarities => Enum.GetValues(typeof(TriggerPolarity));
 
     private void OnMetricReceived(MetricSample sample)
     {
@@ -264,8 +277,25 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         var series = new TimelineSeries(sample.MeterName, sample.InstrumentName, sample.InstrumentType, displayName, sample.Unit ?? string.Empty, sample.Description ?? string.Empty, tagSignature, renderMode, _palette.Next());
         _seriesLookup[key] = series;
         _series.Add(series);
+        if (_triggerConfiguration.TargetSeries is null)
+        {
+            _triggerConfiguration.TargetSeries = series;
+        }
         Logger.LogInformation("Created series for {Meter}/{Instrument} ({Type}) tags: {Tags}", sample.MeterName, sample.InstrumentName, sample.InstrumentType, string.IsNullOrEmpty(tagSignature) ? "<none>" : tagSignature);
         return series;
+    }
+
+    private void OnSeriesCollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        if (_triggerConfiguration.TargetSeries is not null && !_series.Contains(_triggerConfiguration.TargetSeries))
+        {
+            _triggerConfiguration.TargetSeries = _series.FirstOrDefault();
+        }
+
+        if (_triggerConfiguration.TargetSeries is null && _series.Count > 0)
+        {
+            _triggerConfiguration.TargetSeries = _series[0];
+        }
     }
 
     private static TimelineRenderMode DetermineRenderMode(string instrumentType)
