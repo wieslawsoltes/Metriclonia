@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Media.Immutable;
 using Avalonia.Media.TextFormatting;
 using Avalonia.Threading;
 using Metriclonia.Monitor.Infrastructure;
@@ -16,6 +18,19 @@ namespace Metriclonia.Monitor.Visualization;
 public sealed class FlameChartControl : Control
 {
     private static readonly ILogger Logger = Log.For<FlameChartControl>();
+
+    private static readonly ImmutableSolidColorBrush BackgroundBrush = new(Color.FromArgb(245, 8, 11, 18));
+    private static readonly ImmutablePen GridPen = new(new ImmutableSolidColorBrush(Color.FromArgb(35, 255, 255, 255)), 1);
+    private static readonly ImmutableSolidColorBrush EvenLaneBrush = new(Color.FromArgb(28, 255, 255, 255));
+    private static readonly ImmutableSolidColorBrush OddLaneBrush = new(Color.FromArgb(18, 255, 255, 255));
+    private static readonly Typeface NormalTypeface = new("Inter", FontStyle.Normal, FontWeight.Normal);
+    private static readonly Typeface SemiBoldTypeface = new("Inter", FontStyle.Normal, FontWeight.SemiBold);
+    private static readonly Typeface MediumTypeface = new("Inter", FontStyle.Normal, FontWeight.Medium);
+
+    private readonly ConditionalWeakTable<LaneRenderInfo, LaneLayoutCache> _laneLayoutCaches = new();
+    private readonly CachedLayout[] _timeAxisLabelCache = { new(), new(), new(), new(), new(), new(), new() };
+    private CachedLayout _titleLayout = new();
+    private CachedLayout _emptyStateLayout = new();
 
     public static readonly StyledProperty<FlameChartDefinition?> DefinitionProperty =
         AvaloniaProperty.Register<FlameChartControl, FlameChartDefinition?>(nameof(Definition));
@@ -300,7 +315,7 @@ public sealed class FlameChartControl : Control
         base.Render(context);
 
         var bounds = Bounds;
-        context.FillRectangle(new SolidColorBrush(Color.FromArgb(245, 8, 11, 18)), bounds);
+        context.FillRectangle(BackgroundBrush, bounds);
 
         var definition = Definition;
         if (definition is null)
@@ -363,7 +378,7 @@ public sealed class FlameChartControl : Control
 
         DrawTimeAxis(context, labelWidth, topPadding, plotWidth, plotHeight, startTime, endTime);
 
-        var titleLayout = CreateTextLayout(definition.Title, 18, FontWeight.SemiBold, Brushes.Gainsboro, TextAlignment.Left, bounds.Width - horizontalPadding * 2);
+        var titleLayout = GetOrCreateLayout(ref _titleLayout, definition.Title, 18, FontWeight.SemiBold, Brushes.Gainsboro, TextAlignment.Left, bounds.Width - horizontalPadding * 2);
         titleLayout.Draw(context, new Point(horizontalPadding, 10));
     }
 
@@ -589,25 +604,29 @@ public sealed class FlameChartControl : Control
 
     private void DrawLaneBackground(DrawingContext context, Rect laneRect, int index)
     {
-        var color = index % 2 == 0 ? Color.FromArgb(28, 255, 255, 255) : Color.FromArgb(18, 255, 255, 255);
-        context.FillRectangle(new SolidColorBrush(color), laneRect);
+        context.FillRectangle(index % 2 == 0 ? EvenLaneBrush : OddLaneBrush, laneRect);
     }
 
     private void DrawLaneLabel(DrawingContext context, LaneRenderInfo lane, Rect labelRect)
     {
+        var cache = GetLaneLayoutCache(lane);
         var accent = lane.Stroke ?? Brushes.Gainsboro;
-        var titleLayout = CreateTextLayout(lane.Definition.DisplayName, 13, FontWeight.SemiBold, accent, TextAlignment.Left, labelRect.Width - 12);
+        var titleLayout = GetOrCreateLayout(ref cache.Title, lane.Definition.DisplayName, 13, FontWeight.SemiBold, accent, TextAlignment.Left, labelRect.Width - 12);
         titleLayout.Draw(context, labelRect.TopLeft + new Vector(8, 2));
 
         if (!string.IsNullOrWhiteSpace(lane.Summary))
         {
-            var summaryLayout = CreateTextLayout(lane.Summary!, 11, FontWeight.Medium, Brushes.Gainsboro, TextAlignment.Left, labelRect.Width - 12);
+            var summaryLayout = GetOrCreateLayout(ref cache.Summary, lane.Summary!, 11, FontWeight.Medium, Brushes.Gainsboro, TextAlignment.Left, labelRect.Width - 12);
             summaryLayout.Draw(context, labelRect.TopLeft + new Vector(8, titleLayout.Height + 4));
+        }
+        else
+        {
+            cache.Summary.Clear();
         }
 
         if (!string.IsNullOrWhiteSpace(lane.Definition.Description))
         {
-            var descriptionLayout = CreateTextLayout(lane.Definition.Description!, 10, FontWeight.Normal, Brushes.Gray, TextAlignment.Left, labelRect.Width - 12);
+            var descriptionLayout = GetOrCreateLayout(ref cache.Description, lane.Definition.Description!, 10, FontWeight.Normal, Brushes.Gray, TextAlignment.Left, labelRect.Width - 12);
             var y = labelRect.Bottom - descriptionLayout.Height - 2;
             if (y < labelRect.Top + titleLayout.Height + 6)
             {
@@ -615,6 +634,10 @@ public sealed class FlameChartControl : Control
             }
 
             descriptionLayout.Draw(context, new Point(labelRect.Left + 8, y));
+        }
+        else
+        {
+            cache.Description.Clear();
         }
     }
 
@@ -627,10 +650,13 @@ public sealed class FlameChartControl : Control
 
         if (lane.Segments.Count == 0)
         {
-            var emptyLayout = CreateTextLayout("no samples", 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Left, laneRect.Width - 16);
+            var cache = GetLaneLayoutCache(lane);
+            var emptyLayout = GetOrCreateLayout(ref cache.Empty, "no samples", 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Left, laneRect.Width - 16);
             emptyLayout.Draw(context, laneRect.TopLeft + new Vector(6, Math.Max(4, laneRect.Height / 2 - emptyLayout.Height / 2)));
             return;
         }
+
+        var laneCache = GetLaneLayoutCache(lane);
 
         foreach (var segment in lane.Segments)
         {
@@ -656,7 +682,7 @@ public sealed class FlameChartControl : Control
             if (rect.Width > 50)
             {
                 var text = segment.Label;
-                var textLayout = CreateTextLayout(text, 11, FontWeight.Medium, Brushes.White, TextAlignment.Center, rect.Width - 8);
+                var textLayout = laneCache.GetSegmentLayout(text, rect.Width - 8);
                 var position = new Point(rect.Left + (rect.Width - textLayout.WidthIncludingTrailingWhitespace) / 2, rect.Top + (rect.Height - textLayout.Height) / 2);
                 textLayout.Draw(context, position);
             }
@@ -692,14 +718,13 @@ public sealed class FlameChartControl : Control
 
     private void DrawTimeGrid(DrawingContext context, double labelWidth, double topPadding, double plotWidth, double plotHeight)
     {
-        var gridPen = new Pen(new SolidColorBrush(Color.FromArgb(35, 255, 255, 255)), 1);
         var steps = 6;
 
         for (var i = 0; i <= steps; i++)
         {
             var progress = (double)i / steps;
             var x = labelWidth + progress * plotWidth;
-            context.DrawLine(gridPen, new Point(x, topPadding), new Point(x, topPadding + plotHeight));
+            context.DrawLine(GridPen, new Point(x, topPadding), new Point(x, topPadding + plotHeight));
         }
     }
 
@@ -714,7 +739,7 @@ public sealed class FlameChartControl : Control
             var label = timestamp.ToLocalTime().ToString("HH:mm:ss.fff");
 
             var x = labelWidth + progress * plotWidth;
-            var textLayout = CreateTextLayout(label, 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Center, 120);
+            var textLayout = GetOrCreateLayout(ref _timeAxisLabelCache[i], label, 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Center, 120);
             var position = new Point(x - textLayout.WidthIncludingTrailingWhitespace / 2, topPadding + plotHeight + 8);
             textLayout.Draw(context, position);
         }
@@ -722,7 +747,7 @@ public sealed class FlameChartControl : Control
 
     private void DrawEmptyState(DrawingContext context, Rect bounds, string message)
     {
-        var layout = CreateTextLayout(message, 14, FontWeight.Medium, Brushes.Gray, TextAlignment.Center, bounds.Width);
+        var layout = GetOrCreateLayout(ref _emptyStateLayout, message, 14, FontWeight.Medium, Brushes.Gray, TextAlignment.Center, bounds.Width);
         var location = new Point((bounds.Width - layout.WidthIncludingTrailingWhitespace) / 2, (bounds.Height - layout.Height) / 2);
         layout.Draw(context, location);
     }
@@ -735,11 +760,94 @@ public sealed class FlameChartControl : Control
         return laneRect.Left + progress * laneRect.Width;
     }
 
+    private LaneLayoutCache GetLaneLayoutCache(LaneRenderInfo lane)
+        => _laneLayoutCaches.GetValue(lane, static _ => new LaneLayoutCache());
+
+    private static TextLayout GetOrCreateLayout(ref CachedLayout cache, string text, double fontSize, FontWeight weight, IBrush brush, TextAlignment alignment, double maxWidth)
+    {
+        const double WidthTolerance = 0.5;
+
+        if (cache.Layout is not null
+            && cache.Text == text
+            && Math.Abs(cache.FontSize - fontSize) < double.Epsilon
+            && cache.Weight == weight
+            && ReferenceEquals(cache.Brush, brush)
+            && cache.Alignment == alignment
+            && Math.Abs(cache.MaxWidth - maxWidth) <= WidthTolerance)
+        {
+            return cache.Layout;
+        }
+
+        cache.Layout?.Dispose();
+        cache.Layout = CreateTextLayout(text, fontSize, weight, brush, alignment, maxWidth);
+        cache.Text = text;
+        cache.FontSize = fontSize;
+        cache.Weight = weight;
+        cache.Brush = brush;
+        cache.Alignment = alignment;
+        cache.MaxWidth = maxWidth;
+        return cache.Layout;
+    }
+
     private static TextLayout CreateTextLayout(string text, double fontSize, FontWeight weight, IBrush brush, TextAlignment alignment, double maxWidth)
     {
-        var typeface = new Typeface("Inter", FontStyle.Normal, weight);
+        var typeface = ResolveTypeface(weight);
         var constraint = double.IsFinite(maxWidth) && maxWidth > 0 ? maxWidth : double.PositiveInfinity;
         return new TextLayout(text, typeface, fontSize, brush, alignment, TextWrapping.NoWrap, textTrimming: null, textDecorations: null, flowDirection: FlowDirection.LeftToRight, maxWidth: constraint);
+    }
+
+    private static Typeface ResolveTypeface(FontWeight weight)
+    {
+        return weight switch
+        {
+            var w when w == FontWeight.Normal => NormalTypeface,
+            var w when w == FontWeight.SemiBold => SemiBoldTypeface,
+            var w when w == FontWeight.Medium => MediumTypeface,
+            _ => new Typeface("Inter", FontStyle.Normal, weight)
+        };
+    }
+
+    private sealed class CachedLayout
+    {
+        public string? Text;
+        public double FontSize;
+        public FontWeight Weight;
+        public IBrush? Brush;
+        public TextAlignment Alignment;
+        public double MaxWidth;
+        public TextLayout? Layout;
+
+        public void Clear()
+        {
+            Layout?.Dispose();
+            Layout = null;
+            Text = null;
+            Brush = null;
+            FontSize = 0;
+            MaxWidth = 0;
+            Alignment = TextAlignment.Left;
+            Weight = FontWeight.Normal;
+        }
+    }
+
+    private sealed class LaneLayoutCache
+    {
+        public CachedLayout Title = new();
+        public CachedLayout Summary = new();
+        public CachedLayout Description = new();
+        public CachedLayout Empty = new();
+        private readonly Dictionary<string, CachedLayout> _segmentLayouts = new(StringComparer.Ordinal);
+
+        public TextLayout GetSegmentLayout(string text, double maxWidth)
+        {
+            if (!_segmentLayouts.TryGetValue(text, out var cached))
+            {
+                cached = new CachedLayout();
+                _segmentLayouts[text] = cached;
+            }
+
+            return FlameChartControl.GetOrCreateLayout(ref cached, text, 11, FontWeight.Medium, Brushes.White, TextAlignment.Center, maxWidth);
+        }
     }
 
     private sealed record FlameSegment(DateTimeOffset Start, DateTimeOffset End, double DurationMilliseconds, string Label);
