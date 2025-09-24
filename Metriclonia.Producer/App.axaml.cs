@@ -3,13 +3,13 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
-using Metriclonia.Producer.Metrics;
+using Metriclonia.Diagnostics.Monitoring;
 
 namespace Metriclonia.Producer;
 
 public partial class App : Application
 {
-    private AvaloniaMetricsPublisher? _metricsPublisher;
+    private IDisposable? _monitoringSubscription;
 
     public override void Initialize()
     {
@@ -33,14 +33,18 @@ public partial class App : Application
             port = parsedPort;
         }
 
-        _metricsPublisher = new AvaloniaMetricsPublisher(host, port);
+        _monitoringSubscription = this.AttachMetricloniaMonitoring(new MetricloniaMonitoringOptions
+        {
+            Host = host,
+            Port = port
+        });
 
         base.OnFrameworkInitializationCompleted();
     }
 
     private void OnDesktopExit(object? sender, ControlledApplicationLifetimeExitEventArgs e)
     {
-        _metricsPublisher?.Dispose();
-        _metricsPublisher = null;
+        _monitoringSubscription?.Dispose();
+        _monitoringSubscription = null;
     }
 }

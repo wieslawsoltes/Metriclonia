@@ -20,4 +20,8 @@
       <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
     </PackageReference>
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Metriclonia.Diagnostics\Metriclonia.Diagnostics.csproj" />
+  </ItemGroup>
 </Project>

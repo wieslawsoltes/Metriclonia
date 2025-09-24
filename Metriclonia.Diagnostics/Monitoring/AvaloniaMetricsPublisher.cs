@@ -8,7 +8,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 
-namespace Metriclonia.Producer.Metrics;
+namespace Metriclonia.Diagnostics.Monitoring;
 
 internal sealed class AvaloniaMetricsPublisher : IDisposable
 {

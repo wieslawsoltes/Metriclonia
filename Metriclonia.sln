@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Metriclonia.Producer", "Met
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Metriclonia.Monitor", "Metriclonia.Monitor\Metriclonia.Monitor.csproj", "{6BFE1E99-49BF-42F1-A916-16BDF3D0F9B9}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Metriclonia.Diagnostics", "Metriclonia.Diagnostics\Metriclonia.Diagnostics.csproj", "{451312AD-7525-4F63-89EA-AAE374B814E1}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -41,6 +43,18 @@ Global
 		{6BFE1E99-49BF-42F1-A916-16BDF3D0F9B9}.Release|x64.Build.0 = Release|Any CPU
 		{6BFE1E99-49BF-42F1-A916-16BDF3D0F9B9}.Release|x86.ActiveCfg = Release|Any CPU
 		{6BFE1E99-49BF-42F1-A916-16BDF3D0F9B9}.Release|x86.Build.0 = Release|Any CPU
+		{451312AD-7525-4F63-89EA-AAE374B814E1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{451312AD-7525-4F63-89EA-AAE374B814E1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{451312AD-7525-4F63-89EA-AAE374B814E1}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{451312AD-7525-4F63-89EA-AAE374B814E1}.Debug|x64.Build.0 = Debug|Any CPU
+		{451312AD-7525-4F63-89EA-AAE374B814E1}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{451312AD-7525-4F63-89EA-AAE374B814E1}.Debug|x86.Build.0 = Debug|Any CPU
+		{451312AD-7525-4F63-89EA-AAE374B814E1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{451312AD-7525-4F63-89EA-AAE374B814E1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{451312AD-7525-4F63-89EA-AAE374B814E1}.Release|x64.ActiveCfg = Release|Any CPU
+		{451312AD-7525-4F63-89EA-AAE374B814E1}.Release|x64.Build.0 = Release|Any CPU
+		{451312AD-7525-4F63-89EA-AAE374B814E1}.Release|x86.ActiveCfg = Release|Any CPU
+		{451312AD-7525-4F63-89EA-AAE374B814E1}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
