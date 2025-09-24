@@ -163,15 +163,9 @@ public class TimelinePlotControl : Control
         var laneHeight = plotHeight / seriesList.Count;
 
         var visibleDuration = Math.Max(1, VisibleDurationSeconds);
-        var now = DateTimeOffset.UtcNow;
-        var latestSample = seriesList.Max(s => s.LastTimestamp);
-        if (latestSample > now)
-        {
-            now = latestSample;
-        }
-
-        var startTime = now - TimeSpan.FromSeconds(visibleDuration);
-        var endTime = now;
+        var latestSample = seriesList.Max(static s => s.LastTimestamp);
+        var endTime = latestSample != default ? latestSample : DateTimeOffset.UtcNow;
+        var startTime = endTime - TimeSpan.FromSeconds(visibleDuration);
 
         DrawTimeGrid(context, labelWidth, topPadding, plotWidth, plotHeight, startTime, endTime);
 

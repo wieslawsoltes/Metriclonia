@@ -29,7 +29,6 @@ public sealed class MasterFlameChartControl : Control
     private static readonly Dictionary<string, CategoryDefinition> Categories;
     private static readonly Dictionary<string, string> MetricCategoryLookup;
     private static readonly Dictionary<string, string> ActivityCategoryLookup;
-    private static readonly int BaseLeafDepth;
 
     private readonly HashSet<TimelineSeries> _metricSubscriptions = new();
     private readonly HashSet<ActivitySeries> _activitySubscriptions = new();
@@ -42,7 +41,6 @@ public sealed class MasterFlameChartControl : Control
         Categories = BuildCategories();
         MetricCategoryLookup = BuildMetricCategoryLookup();
         ActivityCategoryLookup = BuildActivityCategoryLookup();
-        BaseLeafDepth = Categories.Count > 0 ? Categories.Values.Max(static c => c.Depth) + 1 : 1;
 
         AffectsRender<MasterFlameChartControl>(SeriesProperty, ActivitiesProperty, VisibleDurationSecondsProperty);
     }
@@ -289,32 +287,26 @@ public sealed class MasterFlameChartControl : Control
         }
 
         var visibleDuration = Math.Max(1, VisibleDurationSeconds);
-        var now = DateTimeOffset.UtcNow;
         var latestSample = GetLatestTimestamp(seriesList, activityList);
-        if (latestSample > now)
-        {
-            now = latestSample;
-        }
-
-        var endTime = now;
+        var endTime = latestSample != default ? latestSample : DateTimeOffset.UtcNow;
         var startTime = endTime - TimeSpan.FromSeconds(visibleDuration);
 
-        var frames = BuildFrames(seriesList, activityList, startTime, endTime);
-        if (frames.Count == 0)
+        var frames = BuildFrames(seriesList, activityList, startTime, endTime, out var rowLabels);
+        if (frames.Count == 0 && rowLabels.Count == 0)
         {
             DrawEmptyState(context, bounds, "No samples in visible window");
             return;
         }
 
-        var maxDepth = frames.Max(static f => f.Depth);
-        var totalRows = Math.Max(1, maxDepth + 1);
+        var maxFrameDepth = frames.Count > 0 ? frames.Max(static f => f.Depth) : -1;
+        var maxLabelDepth = rowLabels.Count > 0 ? rowLabels.Keys.Max() : -1;
+        var totalRows = Math.Max(1, Math.Max(maxFrameDepth, maxLabelDepth) + 1);
 
         const double topPadding = 32;
         const double bottomPadding = 48;
         const double rowSpacing = 6;
         const double sidePadding = 12;
 
-        var chartWidth = Math.Max(20, bounds.Width - sidePadding * 2);
         var chartHeight = Math.Max(40, bounds.Height - topPadding - bottomPadding);
         var rowHeight = (chartHeight - rowSpacing * Math.Max(0, totalRows - 1)) / totalRows;
         if (rowHeight < 18)
@@ -322,8 +314,10 @@ public sealed class MasterFlameChartControl : Control
             rowHeight = 18;
         }
 
-        var chartOrigin = new Point(sidePadding, topPadding);
-        var chartRect = new Rect(chartOrigin, new Size(chartWidth, rowHeight * totalRows + rowSpacing * Math.Max(0, totalRows - 1)));
+        var labelColumnWidth = 220;
+        var plotWidth = Math.Max(40, bounds.Width - sidePadding * 2 - labelColumnWidth);
+        var chartOrigin = new Point(sidePadding + labelColumnWidth, topPadding);
+        var chartRect = new Rect(chartOrigin, new Size(plotWidth, rowHeight * totalRows + rowSpacing * Math.Max(0, totalRows - 1)));
 
         DrawTimeGrid(context, chartRect, totalRows, rowHeight, rowSpacing);
 
@@ -342,15 +336,17 @@ public sealed class MasterFlameChartControl : Control
             }
         }
 
+        DrawRowLabels(context, rowLabels, chartRect, rowHeight, rowSpacing, labelColumnWidth, sidePadding);
+
         DrawTimeAxis(context, chartRect, startTime, endTime);
 
-        var title = CreateTextLayout("Master Flame Graph", 18, FontWeight.SemiBold, Brushes.Gainsboro, TextAlignment.Left, chartRect.Width);
+        var title = CreateTextLayout("Master Flame Graph", 18, FontWeight.SemiBold, Brushes.Gainsboro, TextAlignment.Left, plotWidth + labelColumnWidth);
         title.Draw(context, new Point(sidePadding, 8));
     }
 
     private static DateTimeOffset GetLatestTimestamp(IReadOnlyList<TimelineSeries> seriesList, IReadOnlyList<ActivitySeries> activityList)
     {
-        var latest = DateTimeOffset.UtcNow;
+        var latest = DateTimeOffset.MinValue;
 
         foreach (var series in seriesList)
         {
@@ -384,34 +380,19 @@ public sealed class MasterFlameChartControl : Control
         return latest;
     }
 
-    private List<Frame> BuildFrames(IReadOnlyList<TimelineSeries> seriesList, IReadOnlyList<ActivitySeries> activityList, DateTimeOffset startTime, DateTimeOffset endTime)
+    private List<Frame> BuildFrames(IReadOnlyList<TimelineSeries> seriesList, IReadOnlyList<ActivitySeries> activityList, DateTimeOffset startTime, DateTimeOffset endTime, out Dictionary<int, string> rowLabels)
     {
         var frames = new List<Frame>();
-        var categoryIntervals = new Dictionary<string, List<Interval>>(Categories.Count, StringComparer.Ordinal);
+        rowLabels = new Dictionary<int, string>();
 
         var metricPlacements = PrepareMetricPlacements(seriesList);
-        var nextLeafDepth = metricPlacements.Count > 0 ? metricPlacements[^1].Depth + 1 : BaseLeafDepth;
+        var nextLeafDepth = metricPlacements.Count > 0 ? metricPlacements[^1].Depth + 1 : 0;
         var activityPlacements = PrepareActivityPlacements(activityList, nextLeafDepth);
-
-        void AddAggregateInterval(string categoryKey, Interval interval)
-        {
-            var current = categoryKey;
-            while (!string.IsNullOrEmpty(current))
-            {
-                if (!categoryIntervals.TryGetValue(current, out var list))
-                {
-                    list = new List<Interval>();
-                    categoryIntervals[current] = list;
-                }
-
-                list.Add(interval);
-                current = Categories.TryGetValue(current, out var definition) ? definition.ParentKey : null;
-            }
-        }
 
         foreach (var placement in metricPlacements)
         {
             var series = placement.Series;
+            rowLabels[placement.Depth] = series.DisplayName;
             if (series.Points.Count == 0)
             {
                 continue;
@@ -458,14 +439,14 @@ public sealed class MasterFlameChartControl : Control
                 var durationMs = (clampedEnd - clampedStart).TotalMilliseconds;
                 var label = $"{series.DisplayName} {point.Value:0.###} {series.Unit}".Trim();
 
-                frames.Add(new Frame(clampedStart, clampedEnd, durationMs, leafDepth, fill, pen, label, isAggregate: false));
-                AddAggregateInterval(categoryKey, new Interval(clampedStart, clampedEnd));
+                frames.Add(new Frame(clampedStart, clampedEnd, durationMs, leafDepth, fill, pen, label));
             }
         }
 
         foreach (var placement in activityPlacements)
         {
             var activity = placement.Series;
+            rowLabels[placement.Depth] = activity.DisplayName;
             if (activity.Points.Count == 0)
             {
                 continue;
@@ -507,31 +488,7 @@ public sealed class MasterFlameChartControl : Control
                 var durationMs = (clampedEnd - clampedStart).TotalMilliseconds;
                 var label = $"{activity.DisplayName} {point.DurationMilliseconds:0.###} ms";
 
-                frames.Add(new Frame(clampedStart, clampedEnd, durationMs, leafDepth, fill, pen, label, isAggregate: false));
-                AddAggregateInterval(categoryKey, new Interval(clampedStart, clampedEnd));
-            }
-        }
-
-        foreach (var kvp in categoryIntervals)
-        {
-            if (!Categories.TryGetValue(kvp.Key, out var category))
-            {
-                continue;
-            }
-
-            var merged = MergeIntervals(kvp.Value);
-            if (merged.Count == 0)
-            {
-                continue;
-            }
-
-            var brush = category.Brush;
-            var pen = new Pen(category.BorderBrush, 1);
-            foreach (var interval in merged)
-            {
-                var durationMs = (interval.End - interval.Start).TotalMilliseconds;
-                var label = category.DisplayName;
-                frames.Add(new Frame(interval.Start, interval.End, durationMs, category.Depth, brush, pen, label, isAggregate: true));
+                frames.Add(new Frame(clampedStart, clampedEnd, durationMs, leafDepth, fill, pen, label));
             }
         }
 
@@ -550,7 +507,7 @@ public sealed class MasterFlameChartControl : Control
             .Select(series =>
             {
                 var categoryKey = ResolveMetricCategory(series);
-                var categoryDepth = Categories.TryGetValue(categoryKey, out var category) ? category.Depth : BaseLeafDepth - 1;
+                var categoryDepth = Categories.TryGetValue(categoryKey, out var category) ? category.Depth : int.MaxValue;
                 return new
                 {
                     Series = series,
@@ -564,7 +521,7 @@ public sealed class MasterFlameChartControl : Control
             .ThenBy(item => item.Series.InstrumentName, StringComparer.Ordinal)
             .ToList();
 
-        var depth = BaseLeafDepth;
+        var depth = 0;
         foreach (var descriptor in descriptors)
         {
             placements.Add(new MetricPlacement(descriptor.Series, descriptor.CategoryKey, depth++));
@@ -585,7 +542,7 @@ public sealed class MasterFlameChartControl : Control
             .Select(activity =>
             {
                 var categoryKey = ResolveActivityCategory(activity);
-                var categoryDepth = Categories.TryGetValue(categoryKey, out var category) ? category.Depth : BaseLeafDepth - 1;
+                var categoryDepth = Categories.TryGetValue(categoryKey, out var category) ? category.Depth : int.MaxValue;
                 return new
                 {
                     Activity = activity,
@@ -599,42 +556,13 @@ public sealed class MasterFlameChartControl : Control
             .ThenBy(item => item.Activity.Name, StringComparer.Ordinal)
             .ToList();
 
-        var depth = Math.Max(startingDepth, BaseLeafDepth);
+        var depth = startingDepth;
         foreach (var descriptor in descriptors)
         {
             placements.Add(new ActivityPlacement(descriptor.Activity, descriptor.CategoryKey, depth++));
         }
 
         return placements;
-    }
-
-    private static List<Interval> MergeIntervals(List<Interval> intervals)
-    {
-        if (intervals.Count == 0)
-        {
-            return new List<Interval>();
-        }
-
-        var ordered = intervals.OrderBy(static i => i.Start).ToList();
-        var merged = new List<Interval> { ordered[0] };
-
-        for (var i = 1; i < ordered.Count; i++)
-        {
-            var current = ordered[i];
-            var last = merged[^1];
-
-            if (current.Start <= last.End)
-            {
-                var end = current.End > last.End ? current.End : last.End;
-                merged[^1] = new Interval(last.Start, end);
-            }
-            else
-            {
-                merged.Add(current);
-            }
-        }
-
-        return merged;
     }
 
     private static string ResolveMetricCategory(TimelineSeries series)
@@ -680,28 +608,46 @@ public sealed class MasterFlameChartControl : Control
         }
 
         var width = right - left;
-        if (width <= 0.5)
-        {
-            return;
-        }
-
-        var threshold = GetDetailThreshold(frame);
-        if (!frame.IsAggregate && width < threshold)
-        {
-            return;
-        }
-
         var rect = new Rect(left, rowTop + 2, Math.Max(1, width), rowHeight - 4);
         context.FillRectangle(frame.Fill, rect);
         context.DrawRectangle(frame.Pen, rect);
 
         if (width > 60)
         {
-            var text = frame.IsAggregate ? frame.Label : frame.Label;
-            var layout = CreateTextLayout(text, 11, frame.IsAggregate ? FontWeight.SemiBold : FontWeight.Medium, Brushes.White, TextAlignment.Center, rect.Width - 8);
+            var layout = CreateTextLayout(frame.Label, 11, FontWeight.Medium, Brushes.White, TextAlignment.Center, rect.Width - 8);
             var position = new Point(rect.Left + (rect.Width - layout.WidthIncludingTrailingWhitespace) / 2, rect.Top + (rect.Height - layout.Height) / 2);
             layout.Draw(context, position);
         }
+    }
+
+    private void DrawRowLabels(DrawingContext context, IReadOnlyDictionary<int, string> rowLabels, Rect chartRect, double rowHeight, double rowSpacing, double labelColumnWidth, double sidePadding)
+    {
+        if (rowLabels.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var (depth, label) in rowLabels.OrderBy(static kvp => kvp.Key))
+        {
+            if (string.IsNullOrWhiteSpace(label))
+            {
+                continue;
+            }
+
+            var rowTop = chartRect.Top + depth * (rowHeight + rowSpacing);
+            var labelRect = new Rect(sidePadding, rowTop, labelColumnWidth - 8, rowHeight);
+            var background = depth % 2 == 0 ? Color.FromArgb(32, 255, 255, 255) : Color.FromArgb(16, 255, 255, 255);
+            context.FillRectangle(new SolidColorBrush(background), labelRect);
+
+            var layout = CreateTextLayout(label, 12, FontWeight.SemiBold, Brushes.Gainsboro, TextAlignment.Left, labelRect.Width - 12);
+            var textPosition = new Point(labelRect.Left + 8, labelRect.Top + Math.Max(2, (labelRect.Height - layout.Height) / 2));
+            layout.Draw(context, textPosition);
+        }
+
+        var divider = new Pen(new SolidColorBrush(Color.FromArgb(80, 255, 255, 255)), 1);
+        var dividerStart = new Point(sidePadding + labelColumnWidth - 4, chartRect.Top);
+        var dividerEnd = new Point(sidePadding + labelColumnWidth - 4, chartRect.Bottom);
+        context.DrawLine(divider, dividerStart, dividerEnd);
     }
 
     private static double MapTime(DateTimeOffset timestamp, DateTimeOffset startTime, DateTimeOffset endTime, Rect chartRect)
@@ -710,26 +656,6 @@ public sealed class MasterFlameChartControl : Control
         var elapsed = (timestamp - startTime).TotalSeconds;
         var progress = Math.Clamp(elapsed / totalSeconds, 0, 1);
         return chartRect.Left + progress * chartRect.Width;
-    }
-
-    private static double GetDetailThreshold(Frame frame)
-    {
-        if (frame.Depth <= 1)
-        {
-            return 0;
-        }
-
-        if (frame.Depth == 2)
-        {
-            return 4;
-        }
-
-        if (frame.Depth == 3)
-        {
-            return 8;
-        }
-
-        return 12;
     }
 
     private static void DrawRowBackground(DrawingContext context, Rect rowRect, int depth)
@@ -873,8 +799,6 @@ public sealed class MasterFlameChartControl : Control
 
     private sealed record ActivityPlacement(ActivitySeries Series, string CategoryKey, int Depth);
 
-    private readonly record struct Interval(DateTimeOffset Start, DateTimeOffset End);
-
     private sealed record CategoryDefinition
     {
         public CategoryDefinition(string Key, string DisplayName, string? ParentKey, Color color)
@@ -908,7 +832,7 @@ public sealed class MasterFlameChartControl : Control
 
     private sealed class Frame
     {
-        public Frame(DateTimeOffset start, DateTimeOffset end, double durationMs, int depth, IBrush fill, Pen pen, string label, bool isAggregate)
+        public Frame(DateTimeOffset start, DateTimeOffset end, double durationMs, int depth, IBrush fill, Pen pen, string label)
         {
             Start = start;
             End = end;
@@ -917,7 +841,6 @@ public sealed class MasterFlameChartControl : Control
             Fill = fill;
             Pen = pen;
             Label = label;
-            IsAggregate = isAggregate;
         }
 
         public DateTimeOffset Start { get; }
@@ -933,7 +856,5 @@ public sealed class MasterFlameChartControl : Control
         public Pen Pen { get; }
 
         public string Label { get; }
-
-        public bool IsAggregate { get; }
     }
 }

@@ -16,12 +16,22 @@ public class ParticleFieldControl : Control
     private readonly DispatcherTimer _timer;
 
     private bool _isInitialized;
+    private bool _isAttached;
+
+    public static readonly StyledProperty<bool> IsPausedProperty =
+        AvaloniaProperty.Register<ParticleFieldControl, bool>(nameof(IsPaused));
 
     public ParticleFieldControl()
     {
         _timer = new DispatcherTimer(TimeSpan.FromMilliseconds(16), DispatcherPriority.Render, (_, _) => Advance());
         this.AttachedToVisualTree += OnAttachedToVisualTree;
         this.DetachedFromVisualTree += OnDetachedFromVisualTree;
+    }
+
+    public bool IsPaused
+    {
+        get => GetValue(IsPausedProperty);
+        set => SetValue(IsPausedProperty, value);
     }
 
     public override void Render(DrawingContext context)
@@ -77,20 +87,26 @@ public class ParticleFieldControl : Control
         }
     }
 
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+
+        if (change.Property == IsPausedProperty)
+        {
+            UpdateTimerState();
+        }
+    }
+
     private void OnAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
     {
-        if (!_timer.IsEnabled)
-        {
-            _timer.Start();
-        }
+        _isAttached = true;
+        UpdateTimerState();
     }
 
     private void OnDetachedFromVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
     {
-        if (_timer.IsEnabled)
-        {
-            _timer.Stop();
-        }
+        _isAttached = false;
+        UpdateTimerState();
     }
 
     private void InitializeParticles(Rect bounds)
@@ -133,6 +149,23 @@ public class ParticleFieldControl : Control
         }
 
         InvalidateVisual();
+    }
+
+    private void UpdateTimerState()
+    {
+        if (!_isAttached || IsPaused)
+        {
+            if (_timer.IsEnabled)
+            {
+                _timer.Stop();
+            }
+            return;
+        }
+
+        if (!_timer.IsEnabled)
+        {
+            _timer.Start();
+        }
     }
 
     private Particle CreateParticle(Rect bounds)

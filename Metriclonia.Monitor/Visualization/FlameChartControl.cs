@@ -299,7 +299,7 @@ public sealed class FlameChartControl : Control
 
         var visibleSeconds = Math.Max(1, VisibleDurationSeconds);
         var latestTimestamp = GetLatestRelevantTimestamp(laneInfos);
-        var endTime = latestTimestamp;
+        var endTime = latestTimestamp != default ? latestTimestamp : DateTimeOffset.UtcNow;
         var startTime = endTime - TimeSpan.FromSeconds(visibleSeconds);
 
         foreach (var lane in laneInfos)
@@ -535,7 +535,7 @@ public sealed class FlameChartControl : Control
 
     private DateTimeOffset GetLatestRelevantTimestamp(IReadOnlyList<LaneRenderInfo> lanes)
     {
-        var latest = DateTimeOffset.UtcNow;
+        var latest = DateTimeOffset.MinValue;
 
         foreach (var lane in lanes)
         {

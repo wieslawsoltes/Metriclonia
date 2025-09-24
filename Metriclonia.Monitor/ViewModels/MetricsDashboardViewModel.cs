@@ -27,7 +27,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
     private readonly ConcurrentQueue<ActivitySample> _pendingActivities = new();
     private readonly DispatcherTimer _flushTimer;
     private readonly UdpMetricsListener _listener;
-    private readonly TimeSpan _retention = TimeSpan.FromMinutes(5);
+    private readonly TimeSpan _retention = TimeSpan.FromMinutes(20);
     private readonly ColorPalette _palette = new();
     private readonly ColorPalette _activityPalette = new();
     private readonly EventHandler _flushHandler;
@@ -59,6 +59,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
     private double _ingressRate;
     private DateTimeOffset _lastIngressSample = DateTimeOffset.UtcNow;
     private int _ingressCounter;
+    private bool _isRenderingPaused;
 
     public MetricsDashboardViewModel(int port)
     {
@@ -116,8 +117,34 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         }
     }
 
+    public bool IsRenderingPaused
+    {
+        get => _isRenderingPaused;
+        set
+        {
+            if (_isRenderingPaused == value)
+            {
+                return;
+            }
+
+            _isRenderingPaused = value;
+            OnPropertyChanged();
+
+            if (!_isRenderingPaused)
+            {
+                Dispatcher.UIThread.Post(Flush);
+            }
+        }
+    }
+
     private void OnMetricReceived(MetricSample sample)
     {
+        if (IsRenderingPaused)
+        {
+            Logger.LogTrace("Ignored metric {Meter}/{Instrument} because capture is paused", sample.MeterName, sample.InstrumentName);
+            return;
+        }
+
         _pending.Enqueue(sample);
         Dispatcher.UIThread.Post(Flush);
         _ingressCounter++;
@@ -126,6 +153,12 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
 
     private void OnActivityReceived(ActivitySample sample)
     {
+        if (IsRenderingPaused)
+        {
+            Logger.LogTrace("Ignored activity {Name} because capture is paused", sample.Name);
+            return;
+        }
+
         _pendingActivities.Enqueue(sample);
         Dispatcher.UIThread.Post(Flush);
         Logger.LogDebug("Enqueued activity {Name} duration={Duration:0.###}ms", sample.Name, sample.DurationMilliseconds);
@@ -138,6 +171,12 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         if (!Dispatcher.UIThread.CheckAccess())
         {
             Dispatcher.UIThread.Post(Flush);
+            return;
+        }
+
+        if (IsRenderingPaused)
+        {
+            Logger.LogTrace("Flush skipped because rendering is paused");
             return;
         }
 

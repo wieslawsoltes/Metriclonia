@@ -7,12 +7,13 @@ using Avalonia.Threading;
 
 namespace Metriclonia.Producer.ViewModels;
 
-public sealed class MainWindowViewModel
+public sealed class MainWindowViewModel : INotifyPropertyChanged
 {
     private const int TimelineCapacity = 240;
 
     private readonly Random _random = new();
     private readonly DispatcherTimer _updateTimer;
+    private bool _isPaused;
 
     public ObservableCollection<ProjectNode> Projects { get; } = new();
 
@@ -108,8 +109,38 @@ public sealed class MainWindowViewModel
         }
     }
 
+    public bool IsPaused
+    {
+        get => _isPaused;
+        set
+        {
+            if (_isPaused == value)
+            {
+                return;
+            }
+
+            _isPaused = value;
+            OnPropertyChanged();
+
+            if (_isPaused)
+            {
+                _updateTimer.Stop();
+            }
+            else
+            {
+                _updateTimer.Start();
+                UpdateModel();
+            }
+        }
+    }
+
     private void UpdateModel()
     {
+        if (IsPaused)
+        {
+            return;
+        }
+
         foreach (var item in Summary)
         {
             var delta = (NextGaussian() - 0.5) * item.Volatility;
@@ -165,6 +196,11 @@ public sealed class MainWindowViewModel
         var standardNormal = Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Sin(2.0 * Math.PI * u2);
         return 0.5 + standardNormal * 0.25;
     }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName ?? string.Empty));
 }
 
 public sealed class ProjectNode

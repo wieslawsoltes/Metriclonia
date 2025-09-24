@@ -29,6 +29,7 @@
                     <TextBlock Text="Window" FontWeight="SemiBold"/>
                     <Slider Minimum="5" Maximum="180" Value="{Binding VisibleDurationSeconds}" Width="200"/>
                     <TextBlock Text="{Binding VisibleDurationSeconds, StringFormat=\{0:0\} s}"/>
+                    <CheckBox Content="Pause capture" IsChecked="{Binding IsRenderingPaused}" VerticalAlignment="Center"/>
                 </StackPanel>
             </Grid>
         </Border>
