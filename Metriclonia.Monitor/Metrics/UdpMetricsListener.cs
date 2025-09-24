@@ -36,6 +36,8 @@ internal sealed class UdpMetricsListener : IAsyncDisposable
 
     public event Action<MetricSample>? MetricReceived;
 
+    public event Action<ActivitySample>? ActivityReceived;
+
     public void Start()
     {
         if (_listenTask is null)
@@ -64,15 +66,50 @@ internal sealed class UdpMetricsListener : IAsyncDisposable
 
                 try
                 {
-                    var sample = JsonSerializer.Deserialize<MetricSample>(result.Buffer, s_jsonOptions);
-                    if (sample is not null)
+                    var envelope = JsonSerializer.Deserialize<MonitoringEnvelope>(result.Buffer, s_jsonOptions);
+                    if (envelope is null)
                     {
+                        Logger.LogWarning("Received payload could not be deserialized ({Length} bytes)", result.Buffer.Length);
+                        continue;
+                    }
+
+                    if (string.Equals(envelope.Type, "metric", StringComparison.OrdinalIgnoreCase) && envelope.Metric is not null)
+                    {
+                        var sample = envelope.Metric;
                         Logger.LogTrace("Received metric payload for {Meter}/{Instrument}", sample.MeterName, sample.InstrumentName);
+                        MetricReceived?.Invoke(sample);
+                    }
+                    else if (string.Equals(envelope.Type, "activity", StringComparison.OrdinalIgnoreCase) && envelope.Activity is not null)
+                    {
+                        var activity = envelope.Activity;
+                        Logger.LogTrace("Received activity payload for {Name}", activity.Name);
+                        ActivityReceived?.Invoke(activity);
+                    }
+                    else if (envelope.Metric is not null && string.IsNullOrEmpty(envelope.Type))
+                    {
+                        // Back-compat: metrics prior to envelope introduction.
+                        var sample = envelope.Metric;
+                        Logger.LogTrace("Received legacy metric payload for {Meter}/{Instrument}", sample.MeterName, sample.InstrumentName);
                         MetricReceived?.Invoke(sample);
                     }
                     else
                     {
-                        Logger.LogWarning("Received payload could not be deserialized ({Length} bytes)", result.Buffer.Length);
+                        try
+                        {
+                            var legacyMetric = JsonSerializer.Deserialize<MetricSample>(result.Buffer, s_jsonOptions);
+                            if (legacyMetric is not null && legacyMetric.Timestamp != default)
+                            {
+                                Logger.LogTrace("Received legacy metric payload for {Meter}/{Instrument}", legacyMetric.MeterName, legacyMetric.InstrumentName);
+                                MetricReceived?.Invoke(legacyMetric);
+                                continue;
+                            }
+                        }
+                        catch (JsonException legacyEx)
+                        {
+                            Logger.LogDebug(legacyEx, "Legacy metric payload deserialization failed");
+                        }
+
+                        Logger.LogWarning("Received payload with unknown type '{Type}'", envelope.Type);
                     }
                 }
                 catch (JsonException ex)

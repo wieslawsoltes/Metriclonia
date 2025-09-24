@@ -22,10 +22,14 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
     private readonly ObservableCollection<TimelineSeries> _series = new();
     private readonly Dictionary<string, TimelineSeries> _seriesLookup = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<MetricSample> _pending = new();
+    private readonly ObservableCollection<ActivitySeries> _activities = new();
+    private readonly Dictionary<string, ActivitySeries> _activitiesLookup = new(StringComparer.Ordinal);
+    private readonly ConcurrentQueue<ActivitySample> _pendingActivities = new();
     private readonly DispatcherTimer _flushTimer;
     private readonly UdpMetricsListener _listener;
     private readonly TimeSpan _retention = TimeSpan.FromMinutes(5);
     private readonly ColorPalette _palette = new();
+    private readonly ColorPalette _activityPalette = new();
     private readonly EventHandler _flushHandler;
     private static readonly MetricSeed[] SeedMetrics =
     {
@@ -39,6 +43,16 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         new("Avalonia.Diagnostic.Meter", "avalonia.ui.visual.count", "ObservableUpDownCounter", "{visual}", "Number of visual elements currently present in the visual tree", "Int64"),
         new("Avalonia.Diagnostic.Meter", "avalonia.ui.dispatcher.timer.count", "ObservableUpDownCounter", "{timer}", "Number of active dispatcher timers in the application", "Int64")
     };
+    private static readonly ActivitySeed[] SeedActivities =
+    {
+        new("Avalonia.AttachingStyle", "Style attachment phases when applying styles to controls"),
+        new("Avalonia.FindingResource", "Resource resolution lookups across resource scopes"),
+        new("Avalonia.EvaluatingStyle", "Evaluation of style activators and triggers"),
+        new("Avalonia.MeasuringLayoutable", "Layoutable measure pass evaluations"),
+        new("Avalonia.ArrangingLayoutable", "Layoutable arrange pass evaluations"),
+        new("Avalonia.PerformingHitTest", "Hit testing operations on the visual tree"),
+        new("Avalonia.RaisingRoutedEvent", "Routing of Avalonia routed events")
+    };
     private static readonly ILogger Logger = Log.For<MetricsDashboardViewModel>();
 
     private double _visibleDurationSeconds = 30;
@@ -51,6 +65,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         ListeningPort = port;
         _listener = new UdpMetricsListener(port);
         _listener.MetricReceived += OnMetricReceived;
+        _listener.ActivityReceived += OnActivityReceived;
         _listener.Start();
         Logger.LogInformation("Metrics dashboard listening on UDP port {Port}", port);
 
@@ -65,9 +80,12 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         Logger.LogDebug("Flush timer started with interval {Interval}ms", _flushTimer.Interval.TotalMilliseconds);
 
         SeedKnownMetricSeries();
+        SeedKnownActivitySeries();
     }
 
     public ObservableCollection<TimelineSeries> Series => _series;
+
+    public ObservableCollection<ActivitySeries> Activities => _activities;
 
     public int ListeningPort { get; }
 
@@ -106,6 +124,13 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         Logger.LogDebug("Enqueued metric {Meter}/{Instrument} = {Value:0.###} {Unit}", sample.MeterName, sample.InstrumentName, sample.Value, sample.Unit);
     }
 
+    private void OnActivityReceived(ActivitySample sample)
+    {
+        _pendingActivities.Enqueue(sample);
+        Dispatcher.UIThread.Post(Flush);
+        Logger.LogDebug("Enqueued activity {Name} duration={Duration:0.###}ms", sample.Name, sample.DurationMilliseconds);
+    }
+
     private void Flush()
     {
         Logger.LogTrace("Flush tick");
@@ -118,8 +143,10 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
 
         var cutoff = DateTimeOffset.UtcNow - _retention;
         var hasChanges = false;
+        var hasActivityUpdates = false;
 
         var processed = 0;
+        var activitiesProcessed = 0;
 
         while (_pending.TryDequeue(out var sample))
         {
@@ -146,6 +173,19 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         if (hasChanges)
         {
             OnPropertyChanged(nameof(Series));
+        }
+
+        while (_pendingActivities.TryDequeue(out var activity))
+        {
+            var series = GetOrCreateActivitySeries(activity.Name);
+            series.Append(activity);
+            hasActivityUpdates = true;
+            activitiesProcessed++;
+        }
+
+        if (hasActivityUpdates)
+        {
+            Logger.LogTrace("Flush processed {Count} activity samples (activities={ActivitySeries})", activitiesProcessed, _activities.Count);
         }
 
         if (processed > 0)
@@ -252,7 +292,39 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         }
     }
 
+    private void SeedKnownActivitySeries()
+    {
+        foreach (var seed in SeedActivities)
+        {
+            GetOrCreateActivitySeries(seed.Name, seed.Description);
+        }
+    }
+
+    private ActivitySeries GetOrCreateActivitySeries(string name, string? description = null)
+    {
+        if (_activitiesLookup.TryGetValue(name, out var existing))
+        {
+            if (!string.IsNullOrWhiteSpace(description))
+            {
+                existing.TryUpdateDescription(description);
+            }
+
+            return existing;
+        }
+
+        var resolvedDescription = description ?? SeedActivities.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.Ordinal))
+            .Description ?? string.Empty;
+
+        var series = new ActivitySeries(name, resolvedDescription, _activityPalette.Next());
+        _activitiesLookup[name] = series;
+        _activities.Add(series);
+        Logger.LogInformation("Created activity series for {Activity}", name);
+        return series;
+    }
+
     private readonly record struct MetricSeed(string MeterName, string InstrumentName, string InstrumentType, string? Unit, string? Description, string ValueType);
+
+    private readonly record struct ActivitySeed(string Name, string Description);
 
     private static string BuildTagSignature(Dictionary<string, string?>? tags)
     {
@@ -277,6 +349,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         _flushTimer.Stop();
         _flushTimer.Tick -= _flushHandler;
         _listener.MetricReceived -= OnMetricReceived;
+        _listener.ActivityReceived -= OnActivityReceived;
         await _listener.DisposeAsync().ConfigureAwait(false);
         Logger.LogInformation("Metrics dashboard disposed");
     }

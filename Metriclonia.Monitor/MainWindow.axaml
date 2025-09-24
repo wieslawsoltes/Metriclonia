@@ -32,59 +32,66 @@
             </Grid>
         </Border>
 
-        <Grid ColumnDefinitions="280,6,*">
-            <Border Grid.Column="0" Background="{DynamicResource ThemeControlLowBrush}" Padding="12">
-                <Grid RowDefinitions="Auto,*">
-                    <TextBlock Grid.Row="0" Text="Active Metrics" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <ItemsControl ItemsSource="{Binding Series}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Padding="12" Margin="0,0,0,8" Background="{DynamicResource ThemeBackgroundBrush}" CornerRadius="8">
-                                        <StackPanel Spacing="6">
-                                            <CheckBox IsChecked="{Binding IsVisible}" Content="{Binding DisplayName}" Foreground="{Binding Stroke}" FontWeight="SemiBold">
-                                                <ToolTip.Tip>
-                                                    <StackPanel>
-                                                        <TextBlock Text="{Binding MeterName}" FontWeight="SemiBold"/>
-                                                        <TextBlock Text="{Binding InstrumentName}"/>
-                                                        <TextBlock Text="{Binding TagSignature, FallbackValue=No tags}" FontSize="11"/>
-                                                    </StackPanel>
-                                                </ToolTip.Tip>
-                                            </CheckBox>
-                                            <TextBlock Text="{Binding Description}" FontSize="11" Foreground="Gray" TextWrapping="Wrap"/>
-                                            <UniformGrid Columns="2" Rows="2" ColumnSpacing="12" RowSpacing="6">
-                                                <StackPanel>
-                                                    <TextBlock Text="Latest" FontSize="11" Foreground="Gray"/>
-                                                    <TextBlock Text="{Binding LatestValue, StringFormat=\{0:0.00\}}" FontWeight="SemiBold"/>
+        <TabControl Margin="0,12,0,0">
+            <TabItem Header="Metrics">
+                <Grid ColumnDefinitions="280,6,*">
+                    <Border Grid.Column="0" Background="{DynamicResource ThemeControlLowBrush}" Padding="12">
+                        <Grid RowDefinitions="Auto,*">
+                            <TextBlock Grid.Row="0" Text="Active Metrics" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
+                            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                <ItemsControl ItemsSource="{Binding Series}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Padding="12" Margin="0,0,0,8" Background="{DynamicResource ThemeBackgroundBrush}" CornerRadius="8">
+                                                <StackPanel Spacing="6">
+                                                    <CheckBox IsChecked="{Binding IsVisible}" Content="{Binding DisplayName}" Foreground="{Binding Stroke}" FontWeight="SemiBold">
+                                                        <ToolTip.Tip>
+                                                            <StackPanel>
+                                                                <TextBlock Text="{Binding MeterName}" FontWeight="SemiBold"/>
+                                                                <TextBlock Text="{Binding InstrumentName}"/>
+                                                                <TextBlock Text="{Binding TagSignature, FallbackValue=No tags}" FontSize="11"/>
+                                                            </StackPanel>
+                                                        </ToolTip.Tip>
+                                                    </CheckBox>
+                                                    <TextBlock Text="{Binding Description}" FontSize="11" Foreground="Gray" TextWrapping="Wrap"/>
+                                                    <UniformGrid Columns="2" Rows="2" ColumnSpacing="12" RowSpacing="6">
+                                                        <StackPanel>
+                                                            <TextBlock Text="Latest" FontSize="11" Foreground="Gray"/>
+                                                            <TextBlock Text="{Binding LatestValue, StringFormat=\{0:0.00\}}" FontWeight="SemiBold"/>
+                                                        </StackPanel>
+                                                        <StackPanel>
+                                                            <TextBlock Text="Average" FontSize="11" Foreground="Gray"/>
+                                                            <TextBlock Text="{Binding Average, StringFormat=\{0:0.00\}}" FontWeight="SemiBold"/>
+                                                        </StackPanel>
+                                                        <StackPanel>
+                                                            <TextBlock Text="Minimum" FontSize="11" Foreground="Gray"/>
+                                                            <TextBlock Text="{Binding Minimum, StringFormat=\{0:0.00\}}" FontWeight="SemiBold"/>
+                                                        </StackPanel>
+                                                        <StackPanel>
+                                                            <TextBlock Text="Maximum" FontSize="11" Foreground="Gray"/>
+                                                            <TextBlock Text="{Binding Maximum, StringFormat=\{0:0.00\}}" FontWeight="SemiBold"/>
+                                                        </StackPanel>
+                                                    </UniformGrid>
+                                                    <TextBlock Text="{Binding LastTimestamp, StringFormat=\{0:HH:mm:ss\}}" FontSize="11" Foreground="Gray" HorizontalAlignment="Right"/>
                                                 </StackPanel>
-                                                <StackPanel>
-                                                    <TextBlock Text="Average" FontSize="11" Foreground="Gray"/>
-                                                    <TextBlock Text="{Binding Average, StringFormat=\{0:0.00\}}" FontWeight="SemiBold"/>
-                                                </StackPanel>
-                                                <StackPanel>
-                                                    <TextBlock Text="Minimum" FontSize="11" Foreground="Gray"/>
-                                                    <TextBlock Text="{Binding Minimum, StringFormat=\{0:0.00\}}" FontWeight="SemiBold"/>
-                                                </StackPanel>
-                                                <StackPanel>
-                                                    <TextBlock Text="Maximum" FontSize="11" Foreground="Gray"/>
-                                                    <TextBlock Text="{Binding Maximum, StringFormat=\{0:0.00\}}" FontWeight="SemiBold"/>
-                                                </StackPanel>
-                                            </UniformGrid>
-                                            <TextBlock Text="{Binding LastTimestamp, StringFormat=\{0:HH:mm:ss\}}" FontSize="11" Foreground="Gray" HorizontalAlignment="Right"/>
-                                        </StackPanel>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                    </Border>
+
+                    <GridSplitter Grid.Column="1" Background="{DynamicResource ThemeControlHighBrush}" HorizontalAlignment="Stretch"/>
+
+                    <Border Grid.Column="2" Background="{DynamicResource ThemeBackgroundBrush}" Margin="0,0,12,12" CornerRadius="12" Padding="0">
+                        <controls:TimelineView DataContext="{Binding}"/>
+                    </Border>
                 </Grid>
-            </Border>
-
-            <GridSplitter Grid.Column="1" Background="{DynamicResource ThemeControlHighBrush}" HorizontalAlignment="Stretch"/>
-
-            <Border Grid.Column="2" Background="{DynamicResource ThemeBackgroundBrush}" Margin="0,0,12,12" CornerRadius="12" Padding="0">
-                <controls:TimelineView DataContext="{Binding}"/>
-            </Border>
-        </Grid>
+            </TabItem>
+            <TabItem Header="Activities">
+                <controls:ActivityView DataContext="{Binding}"/>
+            </TabItem>
+        </TabControl>
     </DockPanel>
 </Window>

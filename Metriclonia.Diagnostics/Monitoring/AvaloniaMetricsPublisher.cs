@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -19,7 +20,8 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
     };
 
     private readonly MeterListener _listener;
-    private readonly Channel<MetricSample> _channel;
+    private readonly ActivityListener _activityListener;
+    private readonly Channel<MonitoringEnvelope> _channel;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _senderTask;
     private readonly Timer _observableTimer;
@@ -32,7 +34,7 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
         _udpClient.Connect(host, port);
 
         _observableInterval = observableInterval ?? TimeSpan.FromMilliseconds(500);
-        _channel = Channel.CreateUnbounded<MetricSample>(new UnboundedChannelOptions
+        _channel = Channel.CreateUnbounded<MonitoringEnvelope>(new UnboundedChannelOptions
         {
             SingleReader = true,
             SingleWriter = false
@@ -59,6 +61,16 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
 
         _listener.Start();
 
+        _activityListener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == DiagnosticSourceName,
+            Sample = SampleAllData,
+            SampleUsingParentId = SampleAllDataUsingParentId,
+            ActivityStopped = OnActivityStopped
+        };
+
+        ActivitySource.AddActivityListener(_activityListener);
+
         _observableTimer = new Timer(_ =>
         {
             try
@@ -76,7 +88,7 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
 
     private void OnMeasurement<T>(Instrument instrument, T measurement, ReadOnlySpan<KeyValuePair<string, object?>> tags, object? state)
     {
-        if (!_channel.Writer.TryWrite(CreateSample(instrument, measurement, tags)))
+        if (!_channel.Writer.TryWrite(MonitoringEnvelope.FromMetric(CreateSample(instrument, measurement, tags))))
         {
             // Channel is full or completed; drop the measurement to avoid blocking instrument threads.
         }
@@ -161,6 +173,7 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
     {
         _cts.Cancel();
         _listener.Dispose();
+        _activityListener.Dispose();
         _observableTimer.Dispose();
         _channel.Writer.TryComplete();
         try
@@ -174,6 +187,45 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
         _udpClient.Dispose();
         _cts.Dispose();
     }
+
+    private void OnActivityStopped(Activity activity)
+    {
+        if (activity.Source.Name != DiagnosticSourceName)
+        {
+            return;
+        }
+
+        var tags = activity.Tags;
+        Dictionary<string, string?>? tagDictionary = null;
+
+        if (tags is not null)
+        {
+            foreach (var tag in tags)
+            {
+                tagDictionary ??= new Dictionary<string, string?>(StringComparer.Ordinal);
+                tagDictionary[tag.Key] = tag.Value;
+            }
+        }
+
+        var sample = new ActivitySample
+        {
+            Name = activity.DisplayName,
+            StartTimestamp = activity.StartTimeUtc,
+            DurationMilliseconds = activity.Duration.TotalMilliseconds,
+            Status = activity.Status.ToString(),
+            StatusDescription = activity.StatusDescription,
+            TraceId = activity.TraceId.ToString(),
+            SpanId = activity.SpanId.ToString(),
+            Tags = tagDictionary
+        };
+
+        if (!_channel.Writer.TryWrite(MonitoringEnvelope.FromActivity(sample)))
+        {
+            // Channel is full or completed; drop the activity to avoid blocking instrumentation.
+        }
+    }
+
+    private const string DiagnosticSourceName = "Avalonia.Diagnostic.Source";
 
     private sealed class MetricSample
     {
@@ -195,4 +247,55 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
 
         public Dictionary<string, string?>? Tags { get; init; }
     }
+
+    private sealed class ActivitySample
+    {
+        public string Name { get; init; } = string.Empty;
+
+        public DateTimeOffset StartTimestamp { get; init; }
+
+        public double DurationMilliseconds { get; init; }
+
+        public string Status { get; init; } = string.Empty;
+
+        public string? StatusDescription { get; init; }
+
+        public string TraceId { get; init; } = string.Empty;
+
+        public string SpanId { get; init; } = string.Empty;
+
+        public Dictionary<string, string?>? Tags { get; init; }
+    }
+
+    private sealed class MonitoringEnvelope
+    {
+        [JsonPropertyName("type")]
+        public string Type { get; init; } = string.Empty;
+
+        [JsonPropertyName("metric")]
+        public MetricSample? Metric { get; init; }
+
+        [JsonPropertyName("activity")]
+        public ActivitySample? Activity { get; init; }
+
+        public static MonitoringEnvelope FromMetric(MetricSample sample)
+            => new()
+            {
+                Type = "metric",
+                Metric = sample
+            };
+
+        public static MonitoringEnvelope FromActivity(ActivitySample sample)
+            => new()
+            {
+                Type = "activity",
+                Activity = sample
+            };
+    }
+
+    private static ActivitySamplingResult SampleAllData(ref ActivityCreationOptions<ActivityContext> _)
+        => ActivitySamplingResult.AllData;
+
+    private static ActivitySamplingResult SampleAllDataUsingParentId(ref ActivityCreationOptions<string> _)
+        => ActivitySamplingResult.AllData;
 }

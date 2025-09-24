@@ -1,0 +1,96 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="960" d:DesignHeight="540"
+             x:Class="Metriclonia.Monitor.Controls.ActivityView"
+             x:CompileBindings="False">
+    <Grid RowDefinitions="Auto,*" RowSpacing="12">
+        <Border Grid.Row="0" Padding="12" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="8">
+            <TextBlock Text="Avalonia Diagnostic Activities" FontSize="18" FontWeight="SemiBold"/>
+        </Border>
+
+        <TabControl Grid.Row="1" ItemsSource="{Binding Activities}" Margin="0,0,0,12" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+            <TabControl.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"/>
+                </DataTemplate>
+            </TabControl.ItemTemplate>
+            <TabControl.ContentTemplate>
+                <DataTemplate>
+                    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" Padding="12">
+                        <StackPanel Spacing="16">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="{Binding Name}" FontSize="20" FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding Description}" FontSize="12" Foreground="Gray" TextWrapping="Wrap"/>
+                            </StackPanel>
+
+                            <Border Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="10" Padding="16">
+                                <UniformGrid Columns="3" Rows="3" ColumnSpacing="20" RowSpacing="14">
+                                    <StackPanel>
+                                        <TextBlock Text="Total" FontSize="11" Foreground="Gray"/>
+                                        <TextBlock Text="{Binding TotalCount}" FontWeight="SemiBold" FontSize="16"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Average" FontSize="11" Foreground="Gray"/>
+                                        <TextBlock Text="{Binding AverageDurationMs, StringFormat={}{0:0.000} ms}" FontWeight="SemiBold" FontSize="16"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="P95" FontSize="11" Foreground="Gray"/>
+                                        <TextBlock Text="{Binding Percentile95DurationMs, StringFormat={}{0:0.000} ms}" FontWeight="SemiBold" FontSize="16"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Maximum" FontSize="11" Foreground="Gray"/>
+                                        <TextBlock Text="{Binding MaximumDurationMs, StringFormat={}{0:0.000} ms}" FontWeight="SemiBold" FontSize="16"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Minimum" FontSize="11" Foreground="Gray"/>
+                                        <TextBlock Text="{Binding MinimumDurationMs, StringFormat={}{0:0.000} ms}" FontWeight="SemiBold" FontSize="16"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Last" FontSize="11" Foreground="Gray"/>
+                                        <TextBlock Text="{Binding LastDurationMs, StringFormat={}{0:0.000} ms}" FontWeight="SemiBold" FontSize="16"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Last timestamp" FontSize="11" Foreground="Gray"/>
+                                        <TextBlock Text="{Binding LastTimestamp, StringFormat={}{0:HH:mm:ss.fff}}" FontWeight="SemiBold" FontSize="16"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Last status" FontSize="11" Foreground="Gray"/>
+                                        <TextBlock Text="{Binding LastStatus}" FontWeight="SemiBold" FontSize="16"/>
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Status detail" FontSize="11" Foreground="Gray"/>
+                                        <TextBlock Text="{Binding LastStatusDescription}" FontSize="12" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </UniformGrid>
+                            </Border>
+
+                            <Border Background="{Binding Stroke}" Opacity="0.15" CornerRadius="10" Padding="12" IsVisible="{Binding HasNoObservations}">
+                                <TextBlock Text="Awaiting activity events" FontSize="13" Foreground="Gray" HorizontalAlignment="Center"/>
+                            </Border>
+
+                            <Border Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="10" Padding="12" IsVisible="{Binding HasObservations}">
+                                <StackPanel Spacing="12">
+                                    <TextBlock Text="Recent events" FontSize="14" FontWeight="SemiBold"/>
+                                    <DataGrid ItemsSource="{Binding RecentEntries}" IsReadOnly="True" CanUserSortColumns="False" GridLinesVisibility="Horizontal" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" HeadersVisibility="Column">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Start" Binding="{Binding StartTimestamp, StringFormat={}{0:HH:mm:ss.fff}}" Width="120"/>
+                                            <DataGridTextColumn Header="Duration (ms)" Binding="{Binding DurationMilliseconds, StringFormat={}{0:0.000}}" Width="120"/>
+                                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="120"/>
+                                            <DataGridTextColumn Header="Status detail" Binding="{Binding StatusDescription}" Width="200"/>
+                                            <DataGridTextColumn Header="Trace" Binding="{Binding TraceId}" Width="160"/>
+                                            <DataGridTextColumn Header="Span" Binding="{Binding SpanId}" Width="140"/>
+                                            <DataGridTextColumn Header="Tags" Binding="{Binding TagSummary}" Width="*"/>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                    <TextBlock Text="Showing last 20 events" FontSize="11" Foreground="Gray" HorizontalAlignment="Right"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DataTemplate>
+            </TabControl.ContentTemplate>
+        </TabControl>
+    </Grid>
+</UserControl>
