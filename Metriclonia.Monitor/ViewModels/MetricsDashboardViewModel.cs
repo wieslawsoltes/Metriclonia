@@ -207,6 +207,11 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
             series.TrimBefore(cutoff);
         }
 
+        foreach (var activitySeries in _activities)
+        {
+            activitySeries.TrimBefore(cutoff);
+        }
+
         UpdateIngressRate();
 
         if (hasChanges)

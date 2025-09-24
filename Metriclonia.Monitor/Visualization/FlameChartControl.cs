@@ -7,6 +7,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Media.TextFormatting;
+using Avalonia.Threading;
 using Metriclonia.Monitor.Infrastructure;
 using Microsoft.Extensions.Logging;
 
@@ -33,10 +34,18 @@ public sealed class FlameChartControl : Control
     private readonly Dictionary<ActivitySeries, INotifyCollectionChanged?> _activityPointSubscriptions = new();
     private INotifyCollectionChanged? _seriesCollectionSubscription;
     private INotifyCollectionChanged? _activityCollectionSubscription;
+    private readonly DispatcherTimer _clockTimer;
 
     static FlameChartControl()
     {
         AffectsRender<FlameChartControl>(DefinitionProperty, VisibleDurationSecondsProperty);
+    }
+
+    public FlameChartControl()
+    {
+        _clockTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) => InvalidateVisual());
+        AttachedToVisualTree += OnAttachedToVisualTree;
+        DetachedFromVisualTree += OnDetachedFromVisualTree;
     }
 
     public FlameChartDefinition? Definition
@@ -269,6 +278,22 @@ public sealed class FlameChartControl : Control
 
     private void OnActivityPointsChanged(object? sender, NotifyCollectionChangedEventArgs e)
         => InvalidateVisual();
+
+    private void OnAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        if (!_clockTimer.IsEnabled)
+        {
+            _clockTimer.Start();
+        }
+    }
+
+    private void OnDetachedFromVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        if (_clockTimer.IsEnabled)
+        {
+            _clockTimer.Stop();
+        }
+    }
 
     public override void Render(DrawingContext context)
     {

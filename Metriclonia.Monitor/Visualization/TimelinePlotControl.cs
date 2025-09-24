@@ -7,6 +7,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Media.TextFormatting;
+using Avalonia.Threading;
 using Metriclonia.Monitor.Infrastructure;
 using Microsoft.Extensions.Logging;
 
@@ -23,10 +24,18 @@ public class TimelinePlotControl : Control
         AvaloniaProperty.Register<TimelinePlotControl, double>(nameof(VisibleDurationSeconds), 30d);
 
     private readonly HashSet<TimelineSeries> _attachedSeries = new();
+    private readonly DispatcherTimer _clockTimer;
 
     static TimelinePlotControl()
     {
         AffectsRender<TimelinePlotControl>(SeriesProperty, VisibleDurationSecondsProperty);
+    }
+
+    public TimelinePlotControl()
+    {
+        _clockTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) => InvalidateVisual());
+        AttachedToVisualTree += OnAttachedToVisualTree;
+        DetachedFromVisualTree += OnDetachedFromVisualTree;
     }
 
     public IEnumerable<TimelineSeries>? Series
@@ -137,6 +146,22 @@ public class TimelinePlotControl : Control
 
     private void OnSeriesPointsChanged(object? sender, NotifyCollectionChangedEventArgs e)
         => InvalidateVisual();
+
+    private void OnAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        if (!_clockTimer.IsEnabled)
+        {
+            _clockTimer.Start();
+        }
+    }
+
+    private void OnDetachedFromVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        if (_clockTimer.IsEnabled)
+        {
+            _clockTimer.Stop();
+        }
+    }
 
     public override void Render(DrawingContext context)
     {

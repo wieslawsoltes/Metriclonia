@@ -8,6 +8,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Media.Immutable;
 using Avalonia.Media.TextFormatting;
+using Avalonia.Threading;
 using Metriclonia.Monitor.Infrastructure;
 using Microsoft.Extensions.Logging;
 
@@ -35,6 +36,7 @@ public sealed class MasterFlameChartControl : Control
     private readonly Dictionary<ActivitySeries, INotifyCollectionChanged?> _activityPointSubscriptions = new();
     private INotifyCollectionChanged? _seriesCollectionSubscription;
     private INotifyCollectionChanged? _activityCollectionSubscription;
+    private readonly DispatcherTimer _clockTimer;
 
     static MasterFlameChartControl()
     {
@@ -43,6 +45,13 @@ public sealed class MasterFlameChartControl : Control
         ActivityCategoryLookup = BuildActivityCategoryLookup();
 
         AffectsRender<MasterFlameChartControl>(SeriesProperty, ActivitiesProperty, VisibleDurationSecondsProperty);
+    }
+
+    public MasterFlameChartControl()
+    {
+        _clockTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) => InvalidateVisual());
+        AttachedToVisualTree += OnAttachedToVisualTree;
+        DetachedFromVisualTree += OnDetachedFromVisualTree;
     }
 
     public IEnumerable<TimelineSeries>? Series
@@ -269,6 +278,22 @@ public sealed class MasterFlameChartControl : Control
 
     private void OnActivityPointsChanged(object? sender, NotifyCollectionChangedEventArgs e)
         => InvalidateVisual();
+
+    private void OnAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        if (!_clockTimer.IsEnabled)
+        {
+            _clockTimer.Start();
+        }
+    }
+
+    private void OnDetachedFromVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        if (_clockTimer.IsEnabled)
+        {
+            _clockTimer.Stop();
+        }
+    }
 
     public override void Render(DrawingContext context)
     {

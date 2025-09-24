@@ -120,38 +120,44 @@
                         </DataGrid>
                     </Border>
 
-                    <Grid Grid.Column="1" RowDefinitions="Auto,Auto,*" RowSpacing="12">
-                        <Border Padding="12" Background="{DynamicResource ThemeBackgroundBrush}" CornerRadius="12">
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="Render Timeline" FontWeight="SemiBold" FontSize="14"/>
-                                <controls:SparklineControl Values="{Binding RenderTimeline}" Height="120"/>
-                            </StackPanel>
-                        </Border>
-                        <Border Padding="12" Background="{DynamicResource ThemeBackgroundBrush}" CornerRadius="12">
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="Layout Timeline" FontWeight="SemiBold" FontSize="14"/>
-                                <controls:SparklineControl Values="{Binding LayoutTimeline}" Height="120" Stroke="{DynamicResource ThemeAccentBrush}"/>
-                            </StackPanel>
-                        </Border>
-                        <Border Padding="12" Background="{DynamicResource ThemeBackgroundBrush}" CornerRadius="12">
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="Recent Activity" FontWeight="SemiBold" FontSize="14"/>
-                                <ItemsControl ItemsSource="{Binding ActivityLog}" Height="180">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Border Padding="6" Margin="0,0,0,6" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="6">
-                                                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Stretch">
-                                                    <TextBlock Text="{Binding Timestamp, StringFormat=\{0:HH:mm:ss\}}" FontSize="11" Foreground="Gray" Width="70"/>
-                                                    <TextBlock Text="{Binding Category}" FontSize="11" FontWeight="SemiBold" Width="70"/>
-                                                    <TextBlock Text="{Binding Message}" TextWrapping="Wrap"/>
-                                                </StackPanel>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </StackPanel>
-                        </Border>
-                    </Grid>
+                    <TabControl Grid.Column="1" Margin="0" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+                        <TabItem Header="Render Timeline">
+                            <Border Padding="12" Background="{DynamicResource ThemeBackgroundBrush}" CornerRadius="12" Margin="0,6,0,0">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Render Timeline" FontWeight="SemiBold" FontSize="14"/>
+                                    <controls:SparklineControl Values="{Binding RenderTimeline}" Height="160"/>
+                                </StackPanel>
+                            </Border>
+                        </TabItem>
+                        <TabItem Header="Layout Timeline">
+                            <Border Padding="12" Background="{DynamicResource ThemeBackgroundBrush}" CornerRadius="12" Margin="0,6,0,0">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Layout Timeline" FontWeight="SemiBold" FontSize="14"/>
+                                    <controls:SparklineControl Values="{Binding LayoutTimeline}" Height="160" Stroke="{DynamicResource ThemeAccentBrush}"/>
+                                </StackPanel>
+                            </Border>
+                        </TabItem>
+                        <TabItem Header="Recent Activity">
+                            <Border Padding="12" Background="{DynamicResource ThemeBackgroundBrush}" CornerRadius="12" Margin="0,6,0,0">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="Recent Activity" FontWeight="SemiBold" FontSize="14"/>
+                                    <ItemsControl ItemsSource="{Binding ActivityLog}" Height="220">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Padding="6" Margin="0,0,0,6" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="6">
+                                                    <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Stretch">
+                                                        <TextBlock Text="{Binding Timestamp, StringFormat=\{0:HH:mm:ss\}}" FontSize="11" Foreground="Gray" Width="70"/>
+                                                        <TextBlock Text="{Binding Category}" FontSize="11" FontWeight="SemiBold" Width="70"/>
+                                                        <TextBlock Text="{Binding Message}" TextWrapping="Wrap"/>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+                        </TabItem>
+                    </TabControl>
                 </Grid>
 
                 <Border Grid.Row="2" Margin="12" Padding="12" Background="{DynamicResource ThemeBackgroundBrush}" CornerRadius="12" Height="260">

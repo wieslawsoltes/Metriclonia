@@ -12,7 +12,7 @@ namespace Metriclonia.Monitor.Visualization;
 public sealed class ActivitySeries : INotifyPropertyChanged
 {
     private const int MaxRecentEntries = 20;
-    private const int MaxDurationHistory = 512;
+    private const int MaxDurationHistory = 4096;
 
     private readonly ObservableCollection<ActivityEntry> _recentEntries = new();
     private readonly List<double> _durationHistory = new();
@@ -278,6 +278,37 @@ public sealed class ActivitySeries : INotifyPropertyChanged
     }
 
     public bool HasGraphData => _points.Count > 0;
+
+    internal void TrimBefore(DateTimeOffset cutoff)
+    {
+        var removedPoints = false;
+        while (_points.Count > 0 && _points[0].Timestamp < cutoff)
+        {
+            _points.RemoveAt(0);
+            removedPoints = true;
+        }
+
+        if (removedPoints)
+        {
+            OnPropertyChanged(nameof(Points));
+            OnPropertyChanged(nameof(HasGraphData));
+        }
+
+        var removedEntries = false;
+        for (var i = _recentEntries.Count - 1; i >= 0; i--)
+        {
+            if (_recentEntries[i].StartTimestamp < cutoff)
+            {
+                _recentEntries.RemoveAt(i);
+                removedEntries = true;
+            }
+        }
+
+        if (removedEntries)
+        {
+            OnPropertyChanged(nameof(RecentEntries));
+        }
+    }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
