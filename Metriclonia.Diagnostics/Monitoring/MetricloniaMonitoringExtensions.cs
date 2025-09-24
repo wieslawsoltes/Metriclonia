@@ -24,6 +24,8 @@ public static class MetricloniaMonitoringExtensions
             throw new ArgumentNullException(nameof(options));
         }
 
+        AppContext.SetSwitch("Avalonia.Diagnostics.Diagnostic.IsEnabled", true);
+
         var publisher = new AvaloniaMetricsPublisher(options.Host, options.Port, options.ObservableInterval);
         var handle = new MetricloniaMonitoringHandle(publisher);
 
