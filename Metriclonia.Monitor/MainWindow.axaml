@@ -94,19 +94,32 @@
                 <controls:ActivityView DataContext="{Binding}"/>
             </TabItem>
             <TabItem Header="Flame Charts">
-                <TabControl ItemsSource="{x:Static viz:FlameChartDefinitions.All}" Margin="0,0,0,12" Padding="0" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" TabStripPlacement="Left">
-                    <TabControl.ItemTemplate>
-                        <DataTemplate>
-                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" Margin="0,4"/>
-                        </DataTemplate>
-                    </TabControl.ItemTemplate>
-                    <TabControl.ContentTemplate>
-                        <DataTemplate>
-                            <Border Margin="12" Padding="12" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="12">
-                                <viz:FlameChartControl Definition="{Binding}" Series="{Binding DataContext.Series, RelativeSource={RelativeSource AncestorType=Window}}" Activities="{Binding DataContext.Activities, RelativeSource={RelativeSource AncestorType=Window}}" VisibleDurationSeconds="{Binding DataContext.VisibleDurationSeconds, RelativeSource={RelativeSource AncestorType=Window}}"/>
-                            </Border>
-                        </DataTemplate>
-                    </TabControl.ContentTemplate>
+                <TabControl Margin="0,0,0,12" Padding="0" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" TabStripPlacement="Left">
+                    <TabItem Header="Overview">
+                        <Border Margin="12" Padding="12" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="12">
+                            <viz:MasterFlameChartControl Series="{Binding Series}" Activities="{Binding Activities}" VisibleDurationSeconds="{Binding VisibleDurationSeconds}"/>
+                        </Border>
+                    </TabItem>
+                    <TabItem Header="Rendering">
+                        <Border Margin="12" Padding="12" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="12">
+                            <viz:FlameChartControl Definition="{x:Static viz:FlameChartDefinitions.Rendering}" Series="{Binding Series}" Activities="{Binding Activities}" VisibleDurationSeconds="{Binding VisibleDurationSeconds}"/>
+                        </Border>
+                    </TabItem>
+                    <TabItem Header="Layout">
+                        <Border Margin="12" Padding="12" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="12">
+                            <viz:FlameChartControl Definition="{x:Static viz:FlameChartDefinitions.Layout}" Series="{Binding Series}" Activities="{Binding Activities}" VisibleDurationSeconds="{Binding VisibleDurationSeconds}"/>
+                        </Border>
+                    </TabItem>
+                    <TabItem Header="Input">
+                        <Border Margin="12" Padding="12" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="12">
+                            <viz:FlameChartControl Definition="{x:Static viz:FlameChartDefinitions.Input}" Series="{Binding Series}" Activities="{Binding Activities}" VisibleDurationSeconds="{Binding VisibleDurationSeconds}"/>
+                        </Border>
+                    </TabItem>
+                    <TabItem Header="Resources">
+                        <Border Margin="12" Padding="12" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="12">
+                            <viz:FlameChartControl Definition="{x:Static viz:FlameChartDefinitions.Resources}" Series="{Binding Series}" Activities="{Binding Activities}" VisibleDurationSeconds="{Binding VisibleDurationSeconds}"/>
+                        </Border>
+                    </TabItem>
                 </TabControl>
             </TabItem>
         </TabControl>
