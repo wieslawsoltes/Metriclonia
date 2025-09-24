@@ -1,0 +1,163 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:Metriclonia.Producer.ViewModels"
+        xmlns:controls="clr-namespace:Metriclonia.Producer.Controls"
+        mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="768"
+        x:Class="Metriclonia.Producer.MainWindow"
+        Title="Metriclonia Producer" MinWidth="1024" MinHeight="720" x:CompileBindings="False">
+    <Window.DataContext>
+        <vm:MainWindowViewModel/>
+    </Window.DataContext>
+
+    <DockPanel>
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="_File">
+                <MenuItem Header="New Workspace"/>
+                <MenuItem Header="Open Metrics..."/>
+                <Separator/>
+                <MenuItem Header="Exit"/>
+            </MenuItem>
+            <MenuItem Header="_View">
+                <MenuItem Header="Show Render Lab" IsChecked="True"/>
+                <MenuItem Header="Toggle Timeline" IsChecked="True"/>
+                <MenuItem Header="Diagnostics Overlay"/>
+            </MenuItem>
+            <MenuItem Header="_Tools">
+                <MenuItem Header="Rebuild Layout"/>
+                <MenuItem Header="Invalidate Visual Tree"/>
+                <MenuItem Header="Collect Garbage"/>
+            </MenuItem>
+        </Menu>
+
+        <Border DockPanel.Dock="Bottom" Padding="12" Background="{DynamicResource ThemeControlLowBrush}">
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                <TextBlock Text="Status:" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{Binding ActivityLog[0].Message, FallbackValue=Ready}" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <Grid ColumnDefinitions="280,6,*">
+            <Border Grid.Column="0" Background="{DynamicResource ThemeControlMidBrush}" Padding="12">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="Workspace" FontSize="18" FontWeight="SemiBold"/>
+                    <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                        <TreeView ItemsSource="{Binding Projects}">
+                            <TreeView.ItemTemplate>
+                                <TreeDataTemplate ItemsSource="{Binding Children}">
+                                    <StackPanel Margin="0,6" Spacing="2">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding Summary}" FontSize="11" Foreground="Gray" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </TreeDataTemplate>
+                            </TreeView.ItemTemplate>
+                        </TreeView>
+                    </ScrollViewer>
+                    <Separator/>
+                    <TextBlock Text="Activity" FontSize="16" FontWeight="SemiBold"/>
+                    <ListBox ItemsSource="{Binding ActivityLog}" Height="180">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{Binding Timestamp, StringFormat=\{0:HH:mm:ss\}}" FontSize="11" Foreground="Gray"/>
+                                    <TextBlock Text="{Binding Message}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </StackPanel>
+            </Border>
+
+            <GridSplitter Grid.Column="1" Background="{DynamicResource ThemeControlHighBrush}" HorizontalAlignment="Stretch"/>
+
+            <Grid Grid.Column="2" RowDefinitions="Auto,*,Auto" RowSpacing="12" Margin="0,0,12,12">
+                <StackPanel Grid.Row="0" Spacing="8" Margin="12,12,12,0">
+                    <TextBlock Text="Live Metrics Overview" FontSize="24" FontWeight="Bold"/>
+                    <ItemsControl ItemsSource="{Binding Summary}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel ItemSpacing="12"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource SystemControlBackgroundBaseHighBrush}"
+                                        Padding="16" CornerRadius="12" Width="180" Margin="0,0,12,12">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding DisplayValue}" FontSize="22" FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding TrendText}" Foreground="{DynamicResource ThemeAccentBrush}" FontSize="12"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+
+                <Grid Grid.Row="1" ColumnDefinitions="3*,2*" ColumnSpacing="12" Margin="12">
+                    <Border Grid.Column="0" Padding="12" Background="{DynamicResource SystemControlBackgroundBaseLowBrush}" CornerRadius="12">
+                        <DataGrid ItemsSource="{Binding Tasks}" AutoGenerateColumns="False" HeadersVisibility="All" GridLinesVisibility="All">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="2*"/>
+                                <DataGridTextColumn Header="Owner" Binding="{Binding Owner}" Width="*"/>
+                                <DataGridTextColumn Header="State" Binding="{Binding State}" Width="*"/>
+                                <DataGridTemplateColumn Header="Progress" Width="180">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Grid>
+                                                <ProgressBar Minimum="0" Maximum="1" Value="{Binding Progress}" Height="16" Margin="0,4"/>
+                                                <TextBlock Text="{Binding ProgressPercent}" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="11" FontWeight="SemiBold"/>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Due" Binding="{Binding DueDate, StringFormat=\{0:MMM dd\}}" Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Border>
+
+                    <Grid Grid.Column="1" RowDefinitions="Auto,Auto,*" RowSpacing="12">
+                        <Border Padding="12" Background="{DynamicResource ThemeBackgroundBrush}" CornerRadius="12">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Render Timeline" FontWeight="SemiBold" FontSize="14"/>
+                                <controls:SparklineControl Values="{Binding RenderTimeline}" Height="120"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Padding="12" Background="{DynamicResource ThemeBackgroundBrush}" CornerRadius="12">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Layout Timeline" FontWeight="SemiBold" FontSize="14"/>
+                                <controls:SparklineControl Values="{Binding LayoutTimeline}" Height="120" Stroke="{DynamicResource ThemeAccentBrush}"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Padding="12" Background="{DynamicResource ThemeBackgroundBrush}" CornerRadius="12">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Recent Activity" FontWeight="SemiBold" FontSize="14"/>
+                                <ItemsControl ItemsSource="{Binding ActivityLog}" Height="180">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Padding="6" Margin="0,0,0,6" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="6">
+                                                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Stretch">
+                                                    <TextBlock Text="{Binding Timestamp, StringFormat=\{0:HH:mm:ss\}}" FontSize="11" Foreground="Gray" Width="70"/>
+                                                    <TextBlock Text="{Binding Category}" FontSize="11" FontWeight="SemiBold" Width="70"/>
+                                                    <TextBlock Text="{Binding Message}" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
+
+                <Border Grid.Row="2" Margin="12" Padding="12" Background="{DynamicResource ThemeBackgroundBrush}" CornerRadius="12" Height="260">
+                    <Grid RowDefinitions="Auto,*" RowSpacing="8">
+                        <TextBlock Text="Render Lab" FontWeight="SemiBold" FontSize="18"/>
+                        <controls:ParticleFieldControl Grid.Row="1"/>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</Window>

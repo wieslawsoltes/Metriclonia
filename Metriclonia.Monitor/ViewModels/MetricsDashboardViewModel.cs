@@ -1,0 +1,237 @@
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
+using Avalonia.Threading;
+using Metriclonia.Monitor.Infrastructure;
+using Metriclonia.Monitor.Metrics;
+using Metriclonia.Monitor.Visualization;
+using Microsoft.Extensions.Logging;
+
+namespace Metriclonia.Monitor.ViewModels;
+
+public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDisposable
+{
+    private const double MinVisibleSeconds = 5;
+    private const double MaxVisibleSeconds = 180;
+
+    private readonly ObservableCollection<TimelineSeries> _series = new();
+    private readonly Dictionary<string, TimelineSeries> _seriesLookup = new(StringComparer.Ordinal);
+    private readonly ConcurrentQueue<MetricSample> _pending = new();
+    private readonly DispatcherTimer _flushTimer;
+    private readonly UdpMetricsListener _listener;
+    private readonly TimeSpan _retention = TimeSpan.FromMinutes(5);
+    private readonly ColorPalette _palette = new();
+    private readonly EventHandler _flushHandler;
+    private static readonly ILogger Logger = Log.For<MetricsDashboardViewModel>();
+
+    private double _visibleDurationSeconds = 30;
+    private double _ingressRate;
+    private DateTimeOffset _lastIngressSample = DateTimeOffset.UtcNow;
+    private int _ingressCounter;
+
+    public MetricsDashboardViewModel(int port)
+    {
+        ListeningPort = port;
+        _listener = new UdpMetricsListener(port);
+        _listener.MetricReceived += OnMetricReceived;
+        _listener.Start();
+        Logger.LogInformation("Metrics dashboard listening on UDP port {Port}", port);
+
+        _flushHandler = (_, _) => Flush();
+
+        _flushTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(250)
+        };
+        _flushTimer.Tick += _flushHandler;
+        _flushTimer.Start();
+        Logger.LogDebug("Flush timer started with interval {Interval}ms", _flushTimer.Interval.TotalMilliseconds);
+    }
+
+    public ObservableCollection<TimelineSeries> Series => _series;
+
+    public int ListeningPort { get; }
+
+    public double VisibleDurationSeconds
+    {
+        get => _visibleDurationSeconds;
+        set
+        {
+            var clamped = Math.Clamp(value, MinVisibleSeconds, MaxVisibleSeconds);
+            if (Math.Abs(clamped - _visibleDurationSeconds) > 0.001)
+            {
+                _visibleDurationSeconds = clamped;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    public double IngressRate
+    {
+        get => _ingressRate;
+        private set
+        {
+            if (Math.Abs(value - _ingressRate) > 0.001)
+            {
+                _ingressRate = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    private void OnMetricReceived(MetricSample sample)
+    {
+        _pending.Enqueue(sample);
+        Dispatcher.UIThread.Post(Flush);
+        _ingressCounter++;
+        Logger.LogDebug("Enqueued metric {Meter}/{Instrument} = {Value:0.###} {Unit}", sample.MeterName, sample.InstrumentName, sample.Value, sample.Unit);
+    }
+
+    private void Flush()
+    {
+        Logger.LogTrace("Flush tick");
+
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(Flush);
+            return;
+        }
+
+        var cutoff = DateTimeOffset.UtcNow - _retention;
+        var hasChanges = false;
+
+        var processed = 0;
+
+        while (_pending.TryDequeue(out var sample))
+        {
+            if (!double.IsFinite(sample.Value))
+            {
+                Logger.LogWarning("Discarded non-finite sample {Meter}/{Instrument} ({Value})", sample.MeterName, sample.InstrumentName, sample.Value);
+                continue;
+            }
+
+            var series = GetOrCreateSeries(sample);
+            series.Append(sample.Timestamp, sample.Value, sample.Tags);
+            Logger.LogDebug("Appended sample {Timestamp:O} -> {Display} ({Value:0.###} {Unit})", sample.Timestamp, series.DisplayName, sample.Value, sample.Unit);
+            hasChanges = true;
+            processed++;
+        }
+
+        foreach (var series in _series)
+        {
+            series.TrimBefore(cutoff);
+        }
+
+        UpdateIngressRate();
+
+        if (hasChanges)
+        {
+            OnPropertyChanged(nameof(Series));
+        }
+
+        if (processed > 0)
+        {
+            Logger.LogTrace("Flush appended {Count} samples (series={SeriesCount})", processed, _series.Count);
+            Logger.LogInformation("Flushed {Count} samples. Series tracked: {SeriesCount}. Ingress: {Ingress:F2}/s", processed, _series.Count, IngressRate);
+        }
+    }
+
+    private void UpdateIngressRate()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var elapsed = now - _lastIngressSample;
+        if (elapsed >= TimeSpan.FromSeconds(2))
+        {
+            IngressRate = elapsed.TotalSeconds > 0 ? _ingressCounter / elapsed.TotalSeconds : 0;
+            _ingressCounter = 0;
+            _lastIngressSample = now;
+        }
+    }
+
+    private TimelineSeries GetOrCreateSeries(MetricSample sample)
+    {
+        var key = BuildSeriesKey(sample, out var tagSignature);
+        if (_seriesLookup.TryGetValue(key, out var existing))
+        {
+            return existing;
+        }
+
+        var displayName = BuildDisplayName(sample, tagSignature);
+        var renderMode = DetermineRenderMode(sample.InstrumentType);
+        var series = new TimelineSeries(sample.MeterName, sample.InstrumentName, sample.InstrumentType, displayName, sample.Unit ?? string.Empty, sample.Description ?? string.Empty, tagSignature, renderMode, _palette.Next());
+        _seriesLookup[key] = series;
+        _series.Add(series);
+        Logger.LogInformation("Created series for {Meter}/{Instrument} ({Type}) tags: {Tags}", sample.MeterName, sample.InstrumentName, sample.InstrumentType, string.IsNullOrEmpty(tagSignature) ? "<none>" : tagSignature);
+        return series;
+    }
+
+    private static TimelineRenderMode DetermineRenderMode(string instrumentType)
+    {
+        if (string.IsNullOrWhiteSpace(instrumentType))
+        {
+            return TimelineRenderMode.Line;
+        }
+
+        if (instrumentType.Contains("Counter", StringComparison.OrdinalIgnoreCase))
+        {
+            return TimelineRenderMode.Step;
+        }
+
+        return TimelineRenderMode.Line;
+    }
+
+    private static string BuildSeriesKey(MetricSample sample, out string tagSignature)
+    {
+        tagSignature = BuildTagSignature(sample.Tags);
+        return string.IsNullOrWhiteSpace(tagSignature)
+            ? $"{sample.MeterName}|{sample.InstrumentName}"
+            : $"{sample.MeterName}|{sample.InstrumentName}|{tagSignature}";
+    }
+
+    private static string BuildDisplayName(MetricSample sample, string tagSignature)
+    {
+        if (string.IsNullOrWhiteSpace(tagSignature))
+        {
+            return $"{sample.MeterName} • {sample.InstrumentName}";
+        }
+
+        return $"{sample.MeterName} • {sample.InstrumentName} [{tagSignature}]";
+    }
+
+    private static string BuildTagSignature(Dictionary<string, string?>? tags)
+    {
+        if (tags is null || tags.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var parts = new List<string>(tags.Count);
+        foreach (var kvp in tags.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+        {
+            parts.Add(string.IsNullOrWhiteSpace(kvp.Value)
+                ? kvp.Key
+                : $"{kvp.Key}={kvp.Value}");
+        }
+
+        return string.Join(", ", parts);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _flushTimer.Stop();
+        _flushTimer.Tick -= _flushHandler;
+        _listener.MetricReceived -= OnMetricReceived;
+        await _listener.DisposeAsync().ConfigureAwait(false);
+        Logger.LogInformation("Metrics dashboard disposed");
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName ?? string.Empty));
+}
