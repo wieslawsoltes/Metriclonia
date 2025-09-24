@@ -27,6 +27,18 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
     private readonly TimeSpan _retention = TimeSpan.FromMinutes(5);
     private readonly ColorPalette _palette = new();
     private readonly EventHandler _flushHandler;
+    private static readonly MetricSeed[] SeedMetrics =
+    {
+        new("Avalonia.Diagnostic.Meter", "avalonia.comp.render.time", "Histogram", "ms", "Duration of the compositor render pass on render thread", "Double"),
+        new("Avalonia.Diagnostic.Meter", "avalonia.comp.update.time", "Histogram", "ms", "Duration of the compositor update pass on render thread", "Double"),
+        new("Avalonia.Diagnostic.Meter", "avalonia.ui.measure.time", "Histogram", "ms", "Duration of layout measurement pass on UI thread", "Double"),
+        new("Avalonia.Diagnostic.Meter", "avalonia.ui.arrange.time", "Histogram", "ms", "Duration of layout arrangement pass on UI thread", "Double"),
+        new("Avalonia.Diagnostic.Meter", "avalonia.ui.render.time", "Histogram", "ms", "Duration of render recording pass on UI thread", "Double"),
+        new("Avalonia.Diagnostic.Meter", "avalonia.ui.input.time", "Histogram", "ms", "Duration of input processing on UI thread", "Double"),
+        new("Avalonia.Diagnostic.Meter", "avalonia.ui.event.handler.count", "ObservableUpDownCounter", "{handler}", "Number of event handlers currently registered in the application", "Int64"),
+        new("Avalonia.Diagnostic.Meter", "avalonia.ui.visual.count", "ObservableUpDownCounter", "{visual}", "Number of visual elements currently present in the visual tree", "Int64"),
+        new("Avalonia.Diagnostic.Meter", "avalonia.ui.dispatcher.timer.count", "ObservableUpDownCounter", "{timer}", "Number of active dispatcher timers in the application", "Int64")
+    };
     private static readonly ILogger Logger = Log.For<MetricsDashboardViewModel>();
 
     private double _visibleDurationSeconds = 30;
@@ -51,6 +63,8 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         _flushTimer.Tick += _flushHandler;
         _flushTimer.Start();
         Logger.LogDebug("Flush timer started with interval {Interval}ms", _flushTimer.Interval.TotalMilliseconds);
+
+        SeedKnownMetricSeries();
     }
 
     public ObservableCollection<TimelineSeries> Series => _series;
@@ -202,6 +216,43 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
 
         return $"{sample.MeterName} • {sample.InstrumentName} [{tagSignature}]";
     }
+
+    private void SeedKnownMetricSeries()
+    {
+        var seeded = false;
+
+        foreach (var seed in SeedMetrics)
+        {
+            var sample = new MetricSample
+            {
+                Timestamp = DateTimeOffset.MinValue,
+                MeterName = seed.MeterName,
+                InstrumentName = seed.InstrumentName,
+                InstrumentType = seed.InstrumentType,
+                Unit = seed.Unit,
+                Description = seed.Description,
+                Value = 0,
+                ValueType = seed.ValueType,
+                Tags = null
+            };
+
+            var key = BuildSeriesKey(sample, out _);
+            if (_seriesLookup.ContainsKey(key))
+            {
+                continue;
+            }
+
+            GetOrCreateSeries(sample);
+            seeded = true;
+        }
+
+        if (seeded)
+        {
+            OnPropertyChanged(nameof(Series));
+        }
+    }
+
+    private readonly record struct MetricSeed(string MeterName, string InstrumentName, string InstrumentType, string? Unit, string? Description, string ValueType);
 
     private static string BuildTagSignature(Dictionary<string, string?>? tags)
     {
