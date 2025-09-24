@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:viz="clr-namespace:Metriclonia.Monitor.Visualization"
              mc:Ignorable="d" d:DesignWidth="960" d:DesignHeight="540"
              x:Class="Metriclonia.Monitor.Controls.ActivityView"
              x:CompileBindings="False">
@@ -68,6 +69,13 @@
 
                             <Border Background="{Binding Stroke}" Opacity="0.15" CornerRadius="10" Padding="12" IsVisible="{Binding HasNoObservations}">
                                 <TextBlock Text="Awaiting activity events" FontSize="13" Foreground="Gray" HorizontalAlignment="Center"/>
+                            </Border>
+
+                            <Border Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="10" Padding="12" IsVisible="{Binding HasObservations}">
+                                <StackPanel Spacing="12">
+                                    <TextBlock Text="Duration trend" FontSize="14" FontWeight="SemiBold"/>
+                                    <viz:ActivityGraphControl Points="{Binding Points}" LineBrush="{Binding Stroke}" GridBrush="{DynamicResource ThemeControlMidBrush}" Height="180"/>
+                                </StackPanel>
                             </Border>
 
                             <Border Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="10" Padding="12" IsVisible="{Binding HasObservations}">

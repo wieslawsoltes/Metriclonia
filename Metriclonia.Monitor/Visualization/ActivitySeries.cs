@@ -16,6 +16,7 @@ public sealed class ActivitySeries : INotifyPropertyChanged
 
     private readonly ObservableCollection<ActivityEntry> _recentEntries = new();
     private readonly List<double> _durationHistory = new();
+    private readonly ObservableCollection<ActivityPoint> _points = new();
 
     private int _totalCount;
     private double _totalDurationMs;
@@ -29,6 +30,7 @@ public sealed class ActivitySeries : INotifyPropertyChanged
     private string _lastStatus = string.Empty;
     private string? _lastStatusDescription;
     private readonly ReadOnlyObservableCollection<ActivityEntry> _readOnlyRecentEntries;
+    private readonly ReadOnlyObservableCollection<ActivityPoint> _readOnlyPoints;
 
     public ActivitySeries(string name, string description, Color color)
     {
@@ -38,6 +40,7 @@ public sealed class ActivitySeries : INotifyPropertyChanged
         Stroke = new SolidColorBrush(color);
         AccentBrush = new SolidColorBrush(Color.FromArgb(64, color.R, color.G, color.B));
         _readOnlyRecentEntries = new ReadOnlyObservableCollection<ActivityEntry>(_recentEntries);
+        _readOnlyPoints = new ReadOnlyObservableCollection<ActivityPoint>(_points);
     }
 
     public string Name { get; }
@@ -53,6 +56,8 @@ public sealed class ActivitySeries : INotifyPropertyChanged
     public SolidColorBrush AccentBrush { get; }
 
     public ReadOnlyObservableCollection<ActivityEntry> RecentEntries => _readOnlyRecentEntries;
+
+    public ReadOnlyObservableCollection<ActivityPoint> Points => _readOnlyPoints;
 
     public int TotalCount
     {
@@ -180,6 +185,8 @@ public sealed class ActivitySeries : INotifyPropertyChanged
     internal void Append(ActivitySample sample)
     {
         var duration = sample.DurationMilliseconds;
+        var hadGraphData = HasGraphData;
+
         TotalCount++;
         _totalDurationMs += duration;
         AverageDurationMs = TotalCount > 0 ? _totalDurationMs / TotalCount : 0;
@@ -218,6 +225,8 @@ public sealed class ActivitySeries : INotifyPropertyChanged
             _recentEntries.RemoveAt(_recentEntries.Count - 1);
         }
 
+        AppendPoint(sample.StartTimestamp, duration, hadGraphData);
+
         OnPropertyChanged(nameof(RecentEntries));
     }
 
@@ -251,6 +260,24 @@ public sealed class ActivitySeries : INotifyPropertyChanged
         var index = (int)Math.Clamp(Math.Ceiling(copy.Length * 0.95) - 1, 0, copy.Length - 1);
         Percentile95DurationMs = copy[index];
     }
+
+    private void AppendPoint(DateTimeOffset timestamp, double duration, bool hadGraphDataBefore)
+    {
+        _points.Add(new ActivityPoint(timestamp, duration));
+        if (_points.Count > MaxDurationHistory)
+        {
+            _points.RemoveAt(0);
+        }
+
+        if (hadGraphDataBefore != HasGraphData)
+        {
+            OnPropertyChanged(nameof(HasGraphData));
+        }
+
+        OnPropertyChanged(nameof(Points));
+    }
+
+    public bool HasGraphData => _points.Count > 0;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -306,3 +333,5 @@ public sealed class ActivityEntry
         return string.Join(", ", parts);
     }
 }
+
+public readonly record struct ActivityPoint(DateTimeOffset Timestamp, double DurationMilliseconds);
