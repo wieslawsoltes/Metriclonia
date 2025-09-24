@@ -68,6 +68,7 @@
                                 </UniformGrid>
                                 <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
                                     <CheckBox Content="Auto level" IsChecked="{Binding TriggerConfiguration.AutoLevel}"/>
+                                    <CheckBox Content="Freeze on trigger" IsChecked="{Binding TriggerConfiguration.FreezeOnTrigger}"/>
                                     <StackPanel>
                                         <TextBlock Text="Position" FontSize="11" Foreground="Gray"/>
                                         <Slider Minimum="0" Maximum="1" Value="{Binding TriggerConfiguration.HorizontalPosition}" Width="180" TickFrequency="0.1" IsSnapToTickEnabled="True"/>

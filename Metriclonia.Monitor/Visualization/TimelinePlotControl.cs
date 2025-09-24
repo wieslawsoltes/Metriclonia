@@ -32,6 +32,7 @@ public class TimelinePlotControl : Control
     private readonly DispatcherTimer _clockTimer;
     private TriggerConfiguration? _currentTriggerConfiguration;
     private DateTimeOffset _lastTriggerTimestamp;
+    private bool _isHoldActive;
 
     static TimelinePlotControl()
     {
@@ -105,7 +106,7 @@ public class TimelinePlotControl : Control
         }
 
         _currentTriggerConfiguration = newConfig;
-        _lastTriggerTimestamp = default;
+        ResetTriggerState();
 
         if (newConfig is not null)
         {
@@ -113,11 +114,50 @@ public class TimelinePlotControl : Control
         }
     }
 
+    private void ResetTriggerState()
+    {
+        _lastTriggerTimestamp = default;
+        _isHoldActive = false;
+
+        if (_currentTriggerConfiguration is { })
+        {
+            _currentTriggerConfiguration.LastResolvedEvent = default;
+        }
+    }
+
+    private void ReleaseTriggerHold()
+    {
+        if (_isHoldActive)
+        {
+            _isHoldActive = false;
+        }
+    }
+
     private void OnTriggerConfigurationChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(TriggerConfiguration.TargetSeries))
+        switch (e.PropertyName)
         {
-            _lastTriggerTimestamp = default;
+            case nameof(TriggerConfiguration.TargetSeries):
+                ResetTriggerState();
+                break;
+            case nameof(TriggerConfiguration.IsEnabled):
+                if (_currentTriggerConfiguration is { IsEnabled: true })
+                {
+                    ReleaseTriggerHold();
+                }
+                else
+                {
+                    ResetTriggerState();
+                }
+
+                break;
+            case nameof(TriggerConfiguration.FreezeOnTrigger):
+                if (_currentTriggerConfiguration is { FreezeOnTrigger: false })
+                {
+                    ReleaseTriggerHold();
+                }
+
+                break;
         }
 
         InvalidateVisual();
@@ -279,7 +319,14 @@ public class TimelinePlotControl : Control
 
         if (trigger is not null && trigger.IsEnabled)
         {
-            if (TryFindTriggerTimestamp(allSeries, trigger, visibleDurationSeconds, out var candidate, out var isFallback))
+            var freezeEnabled = trigger.FreezeOnTrigger;
+
+            if (freezeEnabled && _isHoldActive && _lastTriggerTimestamp != default)
+            {
+                anchor = _lastTriggerTimestamp;
+                isTriggered = true;
+            }
+            else if (TryFindTriggerTimestamp(allSeries, trigger, visibleDurationSeconds, out var candidate, out var isFallback))
             {
                 if (!isFallback && _lastTriggerTimestamp != default && trigger.HoldoffSeconds > 0)
                 {
@@ -292,22 +339,30 @@ public class TimelinePlotControl : Control
 
                 anchor = candidate != default ? candidate : fallbackLatest;
                 _lastTriggerTimestamp = anchor;
-                trigger.LastResolvedEvent = anchor;
+
+                if (anchor != default)
+                {
+                    trigger.LastResolvedEvent = anchor;
+                }
+
                 isTriggered = anchor != default;
+                _isHoldActive = freezeEnabled && !isFallback && isTriggered;
             }
             else if (trigger.Mode == TriggerMode.Normal && _lastTriggerTimestamp != default)
             {
                 anchor = _lastTriggerTimestamp;
                 isTriggered = true;
+                _isHoldActive = freezeEnabled && _isHoldActive;
             }
             else
             {
                 anchor = fallbackLatest;
+                _isHoldActive = false;
             }
         }
-        else
+        else if (_isHoldActive || _lastTriggerTimestamp != default)
         {
-            _lastTriggerTimestamp = default;
+            ResetTriggerState();
         }
 
         if (anchor == default)

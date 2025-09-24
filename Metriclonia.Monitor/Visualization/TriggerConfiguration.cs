@@ -66,6 +66,7 @@ public sealed class TriggerConfiguration : INotifyPropertyChanged
     private string _visualTemplate = string.Empty;
     private double _visualTolerance = 0.1;
     private double _holdoffSeconds;
+    private bool _freezeOnTrigger;
     private TimelineSeries? _targetSeries;
 
     internal DateTimeOffset LastResolvedEvent { get; set; }
@@ -232,6 +233,12 @@ public sealed class TriggerConfiguration : INotifyPropertyChanged
     {
         get => _holdoffSeconds;
         set => SetField(ref _holdoffSeconds, Math.Max(0, value));
+    }
+
+    public bool FreezeOnTrigger
+    {
+        get => _freezeOnTrigger;
+        set => SetField(ref _freezeOnTrigger, value);
     }
 
     public TimelineSeries? TargetSeries
