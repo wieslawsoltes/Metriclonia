@@ -2,10 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Globalization;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Metriclonia.Contracts.Monitoring;
 using Metriclonia.Contracts.Serialization;
 
@@ -15,6 +18,8 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
 {
     private readonly MeterListener _listener;
     private readonly ActivityListener _activityListener;
+    private const int ChannelCapacity = 32 * 1024;
+
     private readonly Channel<MonitoringEnvelope> _channel;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _senderTask;
@@ -35,10 +40,12 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
 
         _observableInterval = options.ObservableInterval;
         _encoding = options.Encoding;
-        _channel = Channel.CreateUnbounded<MonitoringEnvelope>(new UnboundedChannelOptions
+        _channel = Channel.CreateBounded<MonitoringEnvelope>(new BoundedChannelOptions(ChannelCapacity)
         {
             SingleReader = true,
-            SingleWriter = false
+            SingleWriter = false,
+            AllowSynchronousContinuations = false,
+            FullMode = BoundedChannelFullMode.DropWrite
         });
 
         _listener = new MeterListener
@@ -84,7 +91,11 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
             }
         }, null, _observableInterval, _observableInterval);
 
-        _senderTask = Task.Run(SendAsync);
+        _senderTask = Task.Factory.StartNew(
+            SendAsync,
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach,
+            TaskScheduler.Default).Unwrap();
     }
 
     private void OnMeasurement<T>(Instrument instrument, T measurement, ReadOnlySpan<KeyValuePair<string, object?>> tags, object? state)
@@ -97,32 +108,13 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
 
     private static MetricSample CreateSample<T>(Instrument instrument, T measurement, ReadOnlySpan<KeyValuePair<string, object?>> tags)
     {
-        double value = measurement switch
-        {
-            double d => d,
-            float f => f,
-            decimal dec => (double)dec,
-            long l => l,
-            ulong ul => ul,
-            int i => i,
-            uint ui => ui,
-            short s => s,
-            ushort us => us,
-            byte b => b,
-            sbyte sb => sb,
-            _ => Convert.ToDouble(measurement)
-        };
+        var value = ConvertMeasurementToDouble(in measurement);
+        Dictionary<string, string?>? tagDictionary = null;
 
-        var tagDictionary = tags.Length == 0
-            ? null
-            : new Dictionary<string, string?>(tags.Length, StringComparer.Ordinal);
-
-        if (tagDictionary is not null)
+        if (!tags.IsEmpty)
         {
-            foreach (var tag in tags)
-            {
-                tagDictionary[tag.Key] = tag.Value?.ToString();
-            }
+            tagDictionary = new Dictionary<string, string?>(tags.Length, StringComparer.Ordinal);
+            PopulateTags(tagDictionary, tags);
         }
 
         return new MetricSample
@@ -137,6 +129,84 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
             ValueType = typeof(T).Name,
             Tags = tagDictionary
         };
+    }
+
+    private static void PopulateTags(Dictionary<string, string?> target, ReadOnlySpan<KeyValuePair<string, object?>> tags)
+    {
+        ref var start = ref MemoryMarshal.GetReference(tags);
+        for (var i = 0; i < tags.Length; i++)
+        {
+            ref readonly var tag = ref Unsafe.Add(ref start, i);
+            ref var slot = ref CollectionsMarshal.GetValueRefOrAddDefault(target, tag.Key, out _);
+            slot = tag.Value switch
+            {
+                null => null,
+                string s => s,
+                IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+                _ => tag.Value.ToString()
+            };
+        }
+    }
+
+    private static double ConvertMeasurementToDouble<T>(in T measurement)
+    {
+        if (typeof(T) == typeof(double))
+        {
+            return Unsafe.As<T, double>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(float))
+        {
+            return Unsafe.As<T, float>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(decimal))
+        {
+            var dec = Unsafe.As<T, decimal>(ref Unsafe.AsRef(in measurement));
+            return (double)dec;
+        }
+
+        if (typeof(T) == typeof(long))
+        {
+            return Unsafe.As<T, long>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(ulong))
+        {
+            return Unsafe.As<T, ulong>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(int))
+        {
+            return Unsafe.As<T, int>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(uint))
+        {
+            return Unsafe.As<T, uint>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(short))
+        {
+            return Unsafe.As<T, short>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(ushort))
+        {
+            return Unsafe.As<T, ushort>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(byte))
+        {
+            return Unsafe.As<T, byte>(ref Unsafe.AsRef(in measurement));
+        }
+
+        if (typeof(T) == typeof(sbyte))
+        {
+            return Unsafe.As<T, sbyte>(ref Unsafe.AsRef(in measurement));
+        }
+
+        return Convert.ToDouble(measurement, CultureInfo.InvariantCulture);
     }
 
     private async Task SendAsync()

@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -6,6 +7,7 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using Avalonia.Media;
 using Metriclonia.Contracts.Monitoring;
+using Metriclonia.Monitor.Infrastructure;
 
 namespace Metriclonia.Monitor.Visualization;
 
@@ -255,10 +257,26 @@ public sealed class ActivitySeries : INotifyPropertyChanged
             return;
         }
 
-        var copy = _durationHistory.ToArray();
-        Array.Sort(copy);
-        var index = (int)Math.Clamp(Math.Ceiling(copy.Length * 0.95) - 1, 0, copy.Length - 1);
-        Percentile95DurationMs = copy[index];
+        var count = _durationHistory.Count;
+        double[]? rented = null;
+        Span<double> span = count <= 128
+            ? stackalloc double[128]
+            : (rented = ArrayPool<double>.Shared.Rent(count)).AsSpan(0, count);
+
+        for (var i = 0; i < count; i++)
+        {
+            span[i] = _durationHistory[i];
+        }
+
+        var slice = span[..count];
+        slice.Sort();
+        var index = (int)Math.Clamp(Math.Ceiling(slice.Length * 0.95) - 1, 0, slice.Length - 1);
+        Percentile95DurationMs = slice[index];
+
+        if (rented is not null)
+        {
+            ArrayPool<double>.Shared.Return(rented);
+        }
     }
 
     private void AppendPoint(DateTimeOffset timestamp, double duration, bool hadGraphDataBefore)
@@ -359,9 +377,8 @@ public sealed class ActivityEntry
             return "No tags";
         }
 
-        var parts = _tags.OrderBy(static pair => pair.Key, StringComparer.Ordinal)
-            .Select(kvp => string.IsNullOrEmpty(kvp.Value) ? kvp.Key : $"{kvp.Key}={kvp.Value}");
-        return string.Join(", ", parts);
+        var signature = TagFormatter.BuildSignature(_tags);
+        return string.IsNullOrEmpty(signature) ? "No tags" : signature;
     }
 }
 

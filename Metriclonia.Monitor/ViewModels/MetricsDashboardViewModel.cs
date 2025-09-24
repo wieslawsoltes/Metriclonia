@@ -1,10 +1,12 @@
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using Metriclonia.Contracts.Monitoring;
@@ -34,6 +36,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
     private readonly ColorPalette _activityPalette = new();
     private readonly EventHandler _flushHandler;
     private readonly TriggerConfiguration _triggerConfiguration = new();
+    private int _pendingUiFlush;
     private static readonly MetricSeed[] SeedMetrics =
     {
         new("Avalonia.Diagnostic.Meter", "avalonia.comp.render.time", "Histogram", "ms", "Duration of the compositor render pass on render thread", "Double"),
@@ -57,7 +60,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         new("Avalonia.RaisingRoutedEvent", "Routing of Avalonia routed events")
     };
     private static readonly ILogger Logger = Log.For<MetricsDashboardViewModel>();
-    private const bool EnableMetricDetailLogging = false;
+    private static readonly bool EnableMetricDetailLogging = false;
 
     private double _visibleDurationSeconds = 30;
     private double _ingressRate;
@@ -165,7 +168,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         }
 
         _pending.Enqueue(sample);
-        Dispatcher.UIThread.Post(Flush);
+        ScheduleFlush();
         _ingressCounter++;
         if (EnableMetricDetailLogging)
         {
@@ -185,15 +188,25 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         }
 
         _pendingActivities.Enqueue(sample);
-        Dispatcher.UIThread.Post(Flush);
+        ScheduleFlush();
         if (EnableMetricDetailLogging)
         {
             Logger.LogDebug("Enqueued activity {Name} duration={Duration:0.###}ms", sample.Name, sample.DurationMilliseconds);
         }
     }
 
+    private void ScheduleFlush()
+    {
+        if (Interlocked.Exchange(ref _pendingUiFlush, 1) == 0)
+        {
+            Dispatcher.UIThread.Post(Flush, DispatcherPriority.Background);
+        }
+    }
+
     private void Flush()
     {
+        Interlocked.Exchange(ref _pendingUiFlush, 0);
+
         if (EnableMetricDetailLogging)
         {
             Logger.LogTrace("Flush tick");
@@ -201,7 +214,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
 
         if (!Dispatcher.UIThread.CheckAccess())
         {
-            Dispatcher.UIThread.Post(Flush);
+            ScheduleFlush();
             return;
         }
 
@@ -431,22 +444,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
     private readonly record struct ActivitySeed(string Name, string Description);
 
     private static string BuildTagSignature(Dictionary<string, string?>? tags)
-    {
-        if (tags is null || tags.Count == 0)
-        {
-            return string.Empty;
-        }
-
-        var parts = new List<string>(tags.Count);
-        foreach (var kvp in tags.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
-        {
-            parts.Add(string.IsNullOrWhiteSpace(kvp.Value)
-                ? kvp.Key
-                : $"{kvp.Key}={kvp.Value}");
-        }
-
-        return string.Join(", ", parts);
-    }
+        => TagFormatter.BuildSignature(tags);
 
     public async ValueTask DisposeAsync()
     {
