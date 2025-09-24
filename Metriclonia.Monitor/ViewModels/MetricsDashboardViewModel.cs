@@ -16,7 +16,7 @@ namespace Metriclonia.Monitor.ViewModels;
 
 public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
-    private const double MinVisibleSeconds = 5;
+    private const double MinVisibleSeconds = 1;
     private const double MaxVisibleSeconds = 180;
 
     private readonly ObservableCollection<TimelineSeries> _series = new();

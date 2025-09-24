@@ -27,7 +27,7 @@
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <TextBlock Text="Window" FontWeight="SemiBold"/>
-                    <Slider Minimum="5" Maximum="180" Value="{Binding VisibleDurationSeconds}" Width="200"/>
+                    <Slider Minimum="1" Maximum="180" Value="{Binding VisibleDurationSeconds}" Width="200"/>
                     <TextBlock Text="{Binding VisibleDurationSeconds, StringFormat=\{0:0\} s}"/>
                     <CheckBox Content="Pause capture" IsChecked="{Binding IsRenderingPaused}" VerticalAlignment="Center"/>
                 </StackPanel>
