@@ -6,12 +6,7 @@
              mc:Ignorable="d" d:DesignWidth="960" d:DesignHeight="540"
              x:Class="Metriclonia.Monitor.Controls.ActivityView"
              x:CompileBindings="False">
-    <Grid RowDefinitions="Auto,*" RowSpacing="12">
-        <Border Grid.Row="0" Padding="12" Background="{DynamicResource ThemeControlLowBrush}" CornerRadius="8">
-            <TextBlock Text="Avalonia Diagnostic Activities" FontSize="18" FontWeight="SemiBold"/>
-        </Border>
-
-        <TabControl Grid.Row="1" ItemsSource="{Binding Activities}" Margin="0,0,0,12" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabControl ItemsSource="{Binding Activities}" Margin="0,0,0,12" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" TabStripPlacement="Left">
             <TabControl.ItemTemplate>
                 <DataTemplate>
                     <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"/>
@@ -99,6 +94,5 @@
                     </ScrollViewer>
                 </DataTemplate>
             </TabControl.ContentTemplate>
-        </TabControl>
-    </Grid>
+    </TabControl>
 </UserControl>

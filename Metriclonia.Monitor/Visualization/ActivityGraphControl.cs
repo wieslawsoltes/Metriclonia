@@ -104,12 +104,14 @@ public sealed class ActivityGraphControl : Control
             maxDuration = minDuration + 1;
             minDuration = minDuration - 0.5;
         }
+        var averageDuration = list.Average(p => p.DurationMilliseconds);
 
         var padding = new Thickness(16, 12, 16, 24);
         var plotRect = new Rect(bounds.Position + new Point(padding.Left, padding.Top),
             new Size(Math.Max(10, bounds.Width - padding.Left - padding.Right), Math.Max(10, bounds.Height - padding.Top - padding.Bottom)));
 
         DrawGrid(context, plotRect, minDuration, maxDuration);
+        DrawStats(context, plotRect, minDuration, maxDuration, averageDuration);
         DrawLine(context, plotRect, list, minTimestamp, totalSeconds, minDuration, maxDuration);
         DrawAxis(context, plotRect, minTimestamp, maxTimestamp);
     }
@@ -174,6 +176,42 @@ public sealed class ActivityGraphControl : Control
         var lastX = rect.Left + CalculateX(minTimestamp, totalSeconds, points.Count, points.Count - 1, lastPoint.Timestamp) * rect.Width;
         var lastY = rect.Bottom - (lastPoint.DurationMilliseconds - minDuration) / (maxDuration - minDuration) * rect.Height;
         context.DrawEllipse(lineBrush, null, new Point(lastX, lastY), 4, 4);
+    }
+
+    private void DrawStats(DrawingContext context, Rect rect, double min, double max, double avg)
+    {
+        var baseBrush = (LineBrush as ISolidColorBrush)?.Color ?? Colors.DeepSkyBlue;
+        var minBrush = new SolidColorBrush(Color.FromArgb(140, baseBrush.R, baseBrush.G, baseBrush.B));
+        var avgBrush = new SolidColorBrush(baseBrush);
+        var maxBrush = new SolidColorBrush(Color.FromArgb(190, baseBrush.R, baseBrush.G, baseBrush.B));
+
+        DrawStatLine(context, rect, min, minBrush, "min", min, max);
+        DrawStatLine(context, rect, avg, avgBrush, "avg", min, max);
+        DrawStatLine(context, rect, max, maxBrush, "max", min, max);
+    }
+
+    private void DrawStatLine(DrawingContext context, Rect rect, double value, IBrush brush, string label, double minValue, double maxValue)
+    {
+        if (double.IsNaN(value) || rect.Height <= 0)
+        {
+            return;
+        }
+
+        var range = Math.Max(0.0001, maxValue - minValue);
+        var normalized = Math.Clamp((value - minValue) / range, 0, 1);
+        var y = rect.Bottom - normalized * rect.Height;
+
+        var pen = new Pen(brush, label == "avg" ? 2 : 1) { DashStyle = label == "avg" ? DashStyle.Dot : DashStyle.Dash };
+        context.DrawLine(pen, new Point(rect.Left, y), new Point(rect.Right, y));
+
+        var layout = CreateTextLayout($"{label} {value:0.000} ms", 10, FontWeight.SemiBold, brush, 120);
+        var background = new SolidColorBrush(Color.FromArgb(120, 12, 16, 24));
+        var padding = new Thickness(4, 2);
+        var size = new Size(layout.WidthIncludingTrailingWhitespace + padding.Left + padding.Right, layout.Height + padding.Top + padding.Bottom);
+        var origin = new Point(rect.Right - size.Width - 4, Math.Clamp(y - size.Height / 2, rect.Top, rect.Bottom - size.Height));
+
+        context.FillRectangle(background, new Rect(origin, size), 6);
+        layout.Draw(context, origin + new Point(padding.Left, padding.Top));
     }
 
     private static double CalculateX(DateTimeOffset minTimestamp, double totalSeconds, int count, int index, DateTimeOffset timestamp)
