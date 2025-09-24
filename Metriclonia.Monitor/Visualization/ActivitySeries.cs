@@ -5,7 +5,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using Avalonia.Media;
-using Metriclonia.Monitor.Metrics;
+using Metriclonia.Contracts.Monitoring;
 
 namespace Metriclonia.Monitor.Visualization;
 

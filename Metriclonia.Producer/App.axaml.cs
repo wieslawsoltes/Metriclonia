@@ -3,6 +3,7 @@ using System.Globalization;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Metriclonia.Contracts.Serialization;
 using Metriclonia.Diagnostics.Monitoring;
 
 namespace Metriclonia.Producer;
@@ -33,10 +34,14 @@ public partial class App : Application
             port = parsedPort;
         }
 
+        var encodingEnv = Environment.GetEnvironmentVariable("METRICLONIA_PAYLOAD_ENCODING");
+        var encoding = ResolveEncoding(encodingEnv);
+
         _monitoringSubscription = this.AttachMetricloniaMonitoring(new MetricloniaMonitoringOptions
         {
             Host = host,
-            Port = port
+            Port = port,
+            Encoding = encoding
         });
 
         base.OnFrameworkInitializationCompleted();
@@ -46,5 +51,22 @@ public partial class App : Application
     {
         _monitoringSubscription?.Dispose();
         _monitoringSubscription = null;
+    }
+
+    private static EnvelopeEncoding ResolveEncoding(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return EnvelopeEncoding.Json;
+        }
+
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "binary" => EnvelopeEncoding.Binary,
+            "cbor" => EnvelopeEncoding.Binary,
+            "json" => EnvelopeEncoding.Json,
+            "text" => EnvelopeEncoding.Json,
+            _ => EnvelopeEncoding.Json
+        };
     }
 }

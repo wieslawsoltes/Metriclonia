@@ -1,4 +1,5 @@
 using System;
+using Metriclonia.Contracts.Serialization;
 
 namespace Metriclonia.Diagnostics.Monitoring;
 
@@ -9,4 +10,6 @@ public sealed class MetricloniaMonitoringOptions
     public int Port { get; init; } = 5005;
 
     public TimeSpan ObservableInterval { get; init; } = TimeSpan.FromMilliseconds(500);
+
+    public EnvelopeEncoding Encoding { get; init; } = EnvelopeEncoding.Json;
 }

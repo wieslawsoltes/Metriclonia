@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.Threading.Tasks;
 using Avalonia.Controls;
+using Metriclonia.Contracts.Serialization;
 using Metriclonia.Monitor.Infrastructure;
 using Metriclonia.Monitor.ViewModels;
 using Microsoft.Extensions.Logging;
@@ -18,11 +19,12 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         var port = ResolvePort();
-        _viewModel = new MetricsDashboardViewModel(port);
+        var encoding = ResolveEncoding();
+        _viewModel = new MetricsDashboardViewModel(port, encoding);
         DataContext = _viewModel;
 
         Closed += OnClosed;
-        Logger.LogInformation("Main window initialized. Bound port {Port}", port);
+        Logger.LogInformation("Main window initialized. Bound port {Port} (preferred encoding {Encoding})", port, encoding);
     }
 
     private static int ResolvePort()
@@ -34,6 +36,24 @@ public partial class MainWindow : Window
         }
 
         return 5005;
+    }
+
+    private static EnvelopeEncoding ResolveEncoding()
+    {
+        var env = Environment.GetEnvironmentVariable("METRICLONIA_PAYLOAD_ENCODING");
+        if (string.IsNullOrWhiteSpace(env))
+        {
+            return EnvelopeEncoding.Json;
+        }
+
+        return env.Trim().ToLowerInvariant() switch
+        {
+            "binary" => EnvelopeEncoding.Binary,
+            "cbor" => EnvelopeEncoding.Binary,
+            "json" => EnvelopeEncoding.Json,
+            "text" => EnvelopeEncoding.Json,
+            _ => EnvelopeEncoding.Json
+        };
     }
 
     private async void OnClosed(object? sender, EventArgs e)

@@ -43,11 +43,20 @@ The producer connects to `127.0.0.1:5005` by default. Override with environment 
 - `METRICLONIA_METRICS_HOST` – monitor host (default `127.0.0.1`).
 - `METRICLONIA_METRICS_PORT` – monitor port (default `5005`).
 
-Once running, the producer streams the Avalonia diagnostics metrics (`MeterListener`) over UDP in JSON format.
+Once running, the producer streams the Avalonia diagnostics metrics (`MeterListener`) over UDP using JSON by default. Set `METRICLONIA_PAYLOAD_ENCODING` to `binary` to switch to the compact CBOR payload.
 
 ## Metric format
 
-Samples follow the schema in `Metriclonia.Monitor/Metrics/MetricSample.cs` and are serialized with camelCase property names (e.g., `timestamp`, `meterName`, `instrumentName`, `value`). Non-finite values (`NaN`, `Infinity`) are dropped by the monitor to keep the plot stable.
+Samples follow the schema in `Metriclonia.Contracts/Monitoring/MetricSample.cs` and are serialized with camelCase property names (e.g., `timestamp`, `meterName`, `instrumentName`, `value`). Non-finite values (`NaN`, `Infinity`) are dropped by the monitor to keep the plot stable.
+
+## Transport configuration
+
+Both the monitor and producer honour the optional environment variable `METRICLONIA_PAYLOAD_ENCODING`:
+
+- `json` (default) – UTF-8 JSON envelopes produced via `Metriclonia.Contracts.Serialization.JsonEnvelopeSerializer`.
+- `binary`/`cbor` – compact CBOR envelopes produced via `Metriclonia.Contracts.Serialization.BinaryEnvelopeSerializer`.
+
+When configured, the producer sends using the selected encoding and the monitor prefers the same format while still accepting either when probing incoming packets.
 
 ## Logging
 

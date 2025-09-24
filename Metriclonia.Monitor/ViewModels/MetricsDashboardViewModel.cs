@@ -7,6 +7,8 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Avalonia.Threading;
+using Metriclonia.Contracts.Monitoring;
+using Metriclonia.Contracts.Serialization;
 using Metriclonia.Monitor.Infrastructure;
 using Metriclonia.Monitor.Metrics;
 using Metriclonia.Monitor.Visualization;
@@ -62,10 +64,10 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
     private int _ingressCounter;
     private bool _isRenderingPaused;
 
-    public MetricsDashboardViewModel(int port)
+    public MetricsDashboardViewModel(int port, EnvelopeEncoding encoding = EnvelopeEncoding.Json)
     {
         ListeningPort = port;
-        _listener = new UdpMetricsListener(port);
+        _listener = new UdpMetricsListener(port, encoding);
         _listener.MetricReceived += OnMetricReceived;
         _listener.ActivityReceived += OnActivityReceived;
         _listener.Start();

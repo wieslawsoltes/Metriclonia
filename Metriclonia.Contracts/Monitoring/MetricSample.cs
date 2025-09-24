@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
-namespace Metriclonia.Monitor.Metrics;
+namespace Metriclonia.Contracts.Monitoring;
 
-internal sealed class MetricSample
+public sealed class MetricSample
 {
     [JsonPropertyName("timestamp")]
     public DateTimeOffset Timestamp { get; set; }

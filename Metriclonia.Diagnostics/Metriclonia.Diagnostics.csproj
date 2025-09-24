@@ -6,6 +6,9 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.6" />
-    <PackageReference Include="System.Formats.Cbor" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Metriclonia.Contracts\Metriclonia.Contracts.csproj" />
   </ItemGroup>
 </Project>

@@ -26,7 +26,7 @@ public static class MetricloniaMonitoringExtensions
 
         AppContext.SetSwitch("Avalonia.Diagnostics.Diagnostic.IsEnabled", true);
 
-        var publisher = new AvaloniaMetricsPublisher(options.Host, options.Port, options.ObservableInterval);
+        var publisher = new AvaloniaMetricsPublisher(options);
         var handle = new MetricloniaMonitoringHandle(publisher);
 
         if (application.ApplicationLifetime is IControlledApplicationLifetime lifetime)

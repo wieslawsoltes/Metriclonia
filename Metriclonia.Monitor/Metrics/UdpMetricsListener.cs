@@ -5,6 +5,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Metriclonia.Contracts.Monitoring;
+using Metriclonia.Contracts.Serialization;
 using Metriclonia.Monitor.Infrastructure;
 using Microsoft.Extensions.Logging;
 
@@ -22,16 +24,18 @@ internal sealed class UdpMetricsListener : IAsyncDisposable
 
     private readonly int _port;
     private readonly UdpClient _udpClient;
+    private readonly EnvelopeEncoding _preferredEncoding;
     private readonly CancellationTokenSource _cts = new();
     private Task? _listenTask;
 
-    public UdpMetricsListener(int port)
+    public UdpMetricsListener(int port, EnvelopeEncoding preferredEncoding = EnvelopeEncoding.Json)
     {
         _port = port;
+        _preferredEncoding = preferredEncoding;
         _udpClient = new UdpClient(AddressFamily.InterNetwork);
         _udpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
         _udpClient.Client.Bind(new IPEndPoint(IPAddress.Any, port));
-        Logger.LogInformation("UDP listener bound to port {Port}", port);
+        Logger.LogInformation("UDP listener bound to port {Port} (preferred encoding {Encoding})", port, preferredEncoding);
     }
 
     public event Action<MetricSample>? MetricReceived;
@@ -66,9 +70,14 @@ internal sealed class UdpMetricsListener : IAsyncDisposable
 
                 try
                 {
-                    var parsedAsBinary = BinaryEnvelopeSerializer.TryDeserialize(result.Buffer, out var envelope);
+                    var parsed = MonitoringEnvelopeSerializer.TryDeserialize(result.Buffer, _preferredEncoding, out var envelope);
 
-                    if (!parsedAsBinary)
+                    if (!parsed)
+                    {
+                        parsed = MonitoringEnvelopeSerializer.TryDeserialize(result.Buffer, out envelope);
+                    }
+
+                    if (!parsed)
                     {
                         envelope = JsonSerializer.Deserialize<MonitoringEnvelope>(result.Buffer, s_jsonOptions);
                     }
