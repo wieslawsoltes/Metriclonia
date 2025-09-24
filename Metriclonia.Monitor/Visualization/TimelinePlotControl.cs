@@ -18,6 +18,7 @@ namespace Metriclonia.Monitor.Visualization;
 public class TimelinePlotControl : Control
 {
     private static readonly ILogger Logger = Log.For<TimelinePlotControl>();
+    private const bool EnableRenderTraceLogging = false;
 
     public static readonly StyledProperty<IEnumerable<TimelineSeries>?> SeriesProperty =
         AvaloniaProperty.Register<TimelinePlotControl, IEnumerable<TimelineSeries>?>(nameof(Series));
@@ -254,7 +255,10 @@ public class TimelinePlotControl : Control
 
     public override void Render(DrawingContext context)
     {
-        Logger.LogTrace("Render pass bounds={Bounds}", Bounds);
+        if (EnableRenderTraceLogging)
+        {
+            Logger.LogTrace("Render pass bounds={Bounds}", Bounds);
+        }
         base.Render(context);
 
         var bounds = Bounds;
@@ -1201,17 +1205,26 @@ public class TimelinePlotControl : Control
 
         if (finite == 0)
         {
-            Logger.LogTrace("Renderer skipped {Display} because all {Total} points were non-finite", series.DisplayName, total);
+            if (EnableRenderTraceLogging)
+            {
+                Logger.LogTrace("Renderer skipped {Display} because all {Total} points were non-finite", series.DisplayName, total);
+            }
             return;
         }
 
         if (!TryBuildRenderPoints(snapshot, startTime, endTime, series.RenderMode, out var renderPoints, out var statsPoints))
         {
-            Logger.LogTrace("Renderer skipped {Display}: no points in visible window (total={Total}, finite={Finite})", series.DisplayName, total, finite);
+            if (EnableRenderTraceLogging)
+            {
+                Logger.LogTrace("Renderer skipped {Display}: no points in visible window (total={Total}, finite={Finite})", series.DisplayName, total, finite);
+            }
             return;
         }
 
-        Logger.LogTrace("Renderer drawing {Display} mode={Mode} total={Total} finite={Finite} render={Render} stats={Stats}", series.DisplayName, series.RenderMode, total, finite, renderPoints.Count, statsPoints.Count);
+        if (EnableRenderTraceLogging)
+        {
+            Logger.LogTrace("Renderer drawing {Display} mode={Mode} total={Total} finite={Finite} render={Render} stats={Stats}", series.DisplayName, series.RenderMode, total, finite, renderPoints.Count, statsPoints.Count);
+        }
 
         if (series.RenderMode == TimelineRenderMode.Step)
         {

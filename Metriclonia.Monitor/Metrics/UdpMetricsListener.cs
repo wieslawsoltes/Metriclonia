@@ -21,6 +21,7 @@ internal sealed class UdpMetricsListener : IAsyncDisposable
     };
 
     private static readonly ILogger Logger = Log.For<UdpMetricsListener>();
+    private const bool EnablePayloadTraceLogging = false;
 
     private readonly int _port;
     private readonly UdpClient _udpClient;
@@ -91,20 +92,29 @@ internal sealed class UdpMetricsListener : IAsyncDisposable
                     if (string.Equals(envelope.Type, "metric", StringComparison.OrdinalIgnoreCase) && envelope.Metric is not null)
                     {
                         var sample = envelope.Metric;
-                        Logger.LogTrace("Received metric payload for {Meter}/{Instrument}", sample.MeterName, sample.InstrumentName);
+                        if (EnablePayloadTraceLogging)
+                        {
+                            Logger.LogTrace("Received metric payload for {Meter}/{Instrument}", sample.MeterName, sample.InstrumentName);
+                        }
                         MetricReceived?.Invoke(sample);
                     }
                     else if (string.Equals(envelope.Type, "activity", StringComparison.OrdinalIgnoreCase) && envelope.Activity is not null)
                     {
                         var activity = envelope.Activity;
-                        Logger.LogTrace("Received activity payload for {Name}", activity.Name);
+                        if (EnablePayloadTraceLogging)
+                        {
+                            Logger.LogTrace("Received activity payload for {Name}", activity.Name);
+                        }
                         ActivityReceived?.Invoke(activity);
                     }
                     else if (envelope.Metric is not null && string.IsNullOrEmpty(envelope.Type))
                     {
                         // Back-compat: metrics prior to envelope introduction.
                         var sample = envelope.Metric;
-                        Logger.LogTrace("Received legacy metric payload for {Meter}/{Instrument}", sample.MeterName, sample.InstrumentName);
+                        if (EnablePayloadTraceLogging)
+                        {
+                            Logger.LogTrace("Received legacy metric payload for {Meter}/{Instrument}", sample.MeterName, sample.InstrumentName);
+                        }
                         MetricReceived?.Invoke(sample);
                     }
                     else if (TryHandleLegacyMetric(result.Buffer))
@@ -145,7 +155,10 @@ internal sealed class UdpMetricsListener : IAsyncDisposable
             var legacyMetric = JsonSerializer.Deserialize<MetricSample>(buffer, s_jsonOptions);
             if (legacyMetric is not null && legacyMetric.Timestamp != default)
             {
-                Logger.LogTrace("Received legacy metric payload for {Meter}/{Instrument}", legacyMetric.MeterName, legacyMetric.InstrumentName);
+                if (EnablePayloadTraceLogging)
+                {
+                    Logger.LogTrace("Received legacy metric payload for {Meter}/{Instrument}", legacyMetric.MeterName, legacyMetric.InstrumentName);
+                }
                 MetricReceived?.Invoke(legacyMetric);
                 return true;
             }

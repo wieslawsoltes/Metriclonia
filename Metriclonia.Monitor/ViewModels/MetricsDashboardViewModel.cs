@@ -57,6 +57,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         new("Avalonia.RaisingRoutedEvent", "Routing of Avalonia routed events")
     };
     private static readonly ILogger Logger = Log.For<MetricsDashboardViewModel>();
+    private const bool EnableMetricDetailLogging = false;
 
     private double _visibleDurationSeconds = 30;
     private double _ingressRate;
@@ -156,32 +157,47 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
     {
         if (IsRenderingPaused)
         {
-            Logger.LogTrace("Ignored metric {Meter}/{Instrument} because capture is paused", sample.MeterName, sample.InstrumentName);
+            if (EnableMetricDetailLogging)
+            {
+                Logger.LogTrace("Ignored metric {Meter}/{Instrument} because capture is paused", sample.MeterName, sample.InstrumentName);
+            }
             return;
         }
 
         _pending.Enqueue(sample);
         Dispatcher.UIThread.Post(Flush);
         _ingressCounter++;
-        Logger.LogDebug("Enqueued metric {Meter}/{Instrument} = {Value:0.###} {Unit}", sample.MeterName, sample.InstrumentName, sample.Value, sample.Unit);
+        if (EnableMetricDetailLogging)
+        {
+            Logger.LogDebug("Enqueued metric {Meter}/{Instrument} = {Value:0.###} {Unit}", sample.MeterName, sample.InstrumentName, sample.Value, sample.Unit);
+        }
     }
 
     private void OnActivityReceived(ActivitySample sample)
     {
         if (IsRenderingPaused)
         {
-            Logger.LogTrace("Ignored activity {Name} because capture is paused", sample.Name);
+            if (EnableMetricDetailLogging)
+            {
+                Logger.LogTrace("Ignored activity {Name} because capture is paused", sample.Name);
+            }
             return;
         }
 
         _pendingActivities.Enqueue(sample);
         Dispatcher.UIThread.Post(Flush);
-        Logger.LogDebug("Enqueued activity {Name} duration={Duration:0.###}ms", sample.Name, sample.DurationMilliseconds);
+        if (EnableMetricDetailLogging)
+        {
+            Logger.LogDebug("Enqueued activity {Name} duration={Duration:0.###}ms", sample.Name, sample.DurationMilliseconds);
+        }
     }
 
     private void Flush()
     {
-        Logger.LogTrace("Flush tick");
+        if (EnableMetricDetailLogging)
+        {
+            Logger.LogTrace("Flush tick");
+        }
 
         if (!Dispatcher.UIThread.CheckAccess())
         {
@@ -191,7 +207,10 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
 
         if (IsRenderingPaused)
         {
-            Logger.LogTrace("Flush skipped because rendering is paused");
+            if (EnableMetricDetailLogging)
+            {
+                Logger.LogTrace("Flush skipped because rendering is paused");
+            }
             return;
         }
 
@@ -212,7 +231,10 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
 
             var series = GetOrCreateSeries(sample);
             series.Append(sample.Timestamp, sample.Value, sample.Tags);
-            Logger.LogDebug("Appended sample {Timestamp:O} -> {Display} ({Value:0.###} {Unit})", sample.Timestamp, series.DisplayName, sample.Value, sample.Unit);
+            if (EnableMetricDetailLogging)
+            {
+                Logger.LogDebug("Appended sample {Timestamp:O} -> {Display} ({Value:0.###} {Unit})", sample.Timestamp, series.DisplayName, sample.Value, sample.Unit);
+            }
             hasChanges = true;
             processed++;
         }
@@ -244,13 +266,19 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
 
         if (hasActivityUpdates)
         {
-            Logger.LogTrace("Flush processed {Count} activity samples (activities={ActivitySeries})", activitiesProcessed, _activities.Count);
+            if (EnableMetricDetailLogging)
+            {
+                Logger.LogTrace("Flush processed {Count} activity samples (activities={ActivitySeries})", activitiesProcessed, _activities.Count);
+            }
         }
 
         if (processed > 0)
         {
-            Logger.LogTrace("Flush appended {Count} samples (series={SeriesCount})", processed, _series.Count);
-            Logger.LogInformation("Flushed {Count} samples. Series tracked: {SeriesCount}. Ingress: {Ingress:F2}/s", processed, _series.Count, IngressRate);
+            if (EnableMetricDetailLogging)
+            {
+                Logger.LogTrace("Flush appended {Count} samples (series={SeriesCount})", processed, _series.Count);
+                Logger.LogInformation("Flushed {Count} samples. Series tracked: {SeriesCount}. Ingress: {Ingress:F2}/s", processed, _series.Count, IngressRate);
+            }
         }
     }
 
