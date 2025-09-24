@@ -66,7 +66,13 @@ internal sealed class UdpMetricsListener : IAsyncDisposable
 
                 try
                 {
-                    var envelope = JsonSerializer.Deserialize<MonitoringEnvelope>(result.Buffer, s_jsonOptions);
+                    var parsedAsBinary = BinaryEnvelopeSerializer.TryDeserialize(result.Buffer, out var envelope);
+
+                    if (!parsedAsBinary)
+                    {
+                        envelope = JsonSerializer.Deserialize<MonitoringEnvelope>(result.Buffer, s_jsonOptions);
+                    }
+
                     if (envelope is null)
                     {
                         Logger.LogWarning("Received payload could not be deserialized ({Length} bytes)", result.Buffer.Length);
@@ -92,28 +98,22 @@ internal sealed class UdpMetricsListener : IAsyncDisposable
                         Logger.LogTrace("Received legacy metric payload for {Meter}/{Instrument}", sample.MeterName, sample.InstrumentName);
                         MetricReceived?.Invoke(sample);
                     }
+                    else if (TryHandleLegacyMetric(result.Buffer))
+                    {
+                        continue;
+                    }
                     else
                     {
-                        try
-                        {
-                            var legacyMetric = JsonSerializer.Deserialize<MetricSample>(result.Buffer, s_jsonOptions);
-                            if (legacyMetric is not null && legacyMetric.Timestamp != default)
-                            {
-                                Logger.LogTrace("Received legacy metric payload for {Meter}/{Instrument}", legacyMetric.MeterName, legacyMetric.InstrumentName);
-                                MetricReceived?.Invoke(legacyMetric);
-                                continue;
-                            }
-                        }
-                        catch (JsonException legacyEx)
-                        {
-                            Logger.LogDebug(legacyEx, "Legacy metric payload deserialization failed");
-                        }
-
                         Logger.LogWarning("Received payload with unknown type '{Type}'", envelope.Type);
                     }
                 }
                 catch (JsonException ex)
                 {
+                    if (TryHandleLegacyMetric(result.Buffer))
+                    {
+                        continue;
+                    }
+
                     Logger.LogWarning(ex, "Failed to deserialize metric payload ({Length} bytes)", result.Buffer.Length);
                 }
                 catch (Exception ex)
@@ -127,6 +127,26 @@ internal sealed class UdpMetricsListener : IAsyncDisposable
             _udpClient.Close();
             Logger.LogInformation("UDP listener on port {Port} stopped", _port);
         }
+    }
+
+    private bool TryHandleLegacyMetric(byte[] buffer)
+    {
+        try
+        {
+            var legacyMetric = JsonSerializer.Deserialize<MetricSample>(buffer, s_jsonOptions);
+            if (legacyMetric is not null && legacyMetric.Timestamp != default)
+            {
+                Logger.LogTrace("Received legacy metric payload for {Meter}/{Instrument}", legacyMetric.MeterName, legacyMetric.InstrumentName);
+                MetricReceived?.Invoke(legacyMetric);
+                return true;
+            }
+        }
+        catch (JsonException legacyEx)
+        {
+            Logger.LogDebug(legacyEx, "Legacy metric payload deserialization failed");
+        }
+
+        return false;
     }
 
     public async ValueTask DisposeAsync()

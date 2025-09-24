@@ -2,8 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Formats.Cbor;
 using System.Net.Sockets;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Channels;
@@ -13,12 +13,6 @@ namespace Metriclonia.Diagnostics.Monitoring;
 
 internal sealed class AvaloniaMetricsPublisher : IDisposable
 {
-    private static readonly JsonSerializerOptions s_jsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        WriteIndented = false,
-        NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals
-    };
-
     private readonly MeterListener _listener;
     private readonly ActivityListener _activityListener;
     private readonly Channel<MonitoringEnvelope> _channel;
@@ -149,7 +143,7 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
                 {
                     try
                     {
-                        var payload = JsonSerializer.SerializeToUtf8Bytes(sample, s_jsonOptions);
+                        var payload = BinaryEnvelopeSerializer.Serialize(sample);
                         await _udpClient.SendAsync(payload, payload.Length).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException)
@@ -298,4 +292,137 @@ internal sealed class AvaloniaMetricsPublisher : IDisposable
 
     private static ActivitySamplingResult SampleAllDataUsingParentId(ref ActivityCreationOptions<string> _)
         => ActivitySamplingResult.AllData;
+
+    private static class BinaryEnvelopeSerializer
+    {
+        public static byte[] Serialize(MonitoringEnvelope envelope)
+        {
+            var writer = new CborWriter();
+            WriteEnvelope(writer, envelope);
+            return writer.Encode();
+        }
+
+        private static void WriteEnvelope(CborWriter writer, MonitoringEnvelope envelope)
+        {
+            writer.WriteStartMap(null);
+
+            if (!string.IsNullOrEmpty(envelope.Type))
+            {
+                writer.WriteTextString("type");
+                writer.WriteTextString(envelope.Type);
+            }
+
+            if (envelope.Metric is not null)
+            {
+                writer.WriteTextString("metric");
+                WriteMetric(writer, envelope.Metric);
+            }
+
+            if (envelope.Activity is not null)
+            {
+                writer.WriteTextString("activity");
+                WriteActivity(writer, envelope.Activity);
+            }
+
+            writer.WriteEndMap();
+        }
+
+        private static void WriteMetric(CborWriter writer, MetricSample sample)
+        {
+            writer.WriteStartMap(null);
+
+            writer.WriteTextString("timestamp");
+            writer.WriteInt64(sample.Timestamp.ToUnixTimeMilliseconds());
+
+            writer.WriteTextString("meterName");
+            writer.WriteTextString(sample.MeterName);
+
+            writer.WriteTextString("instrumentName");
+            writer.WriteTextString(sample.InstrumentName);
+
+            writer.WriteTextString("instrumentType");
+            writer.WriteTextString(sample.InstrumentType);
+
+            if (!string.IsNullOrEmpty(sample.Unit))
+            {
+                writer.WriteTextString("unit");
+                writer.WriteTextString(sample.Unit);
+            }
+
+            if (!string.IsNullOrEmpty(sample.Description))
+            {
+                writer.WriteTextString("description");
+                writer.WriteTextString(sample.Description);
+            }
+
+            writer.WriteTextString("value");
+            writer.WriteDouble(sample.Value);
+
+            writer.WriteTextString("valueType");
+            writer.WriteTextString(sample.ValueType);
+
+            if (sample.Tags is { Count: > 0 })
+            {
+                writer.WriteTextString("tags");
+                WriteTags(writer, sample.Tags);
+            }
+
+            writer.WriteEndMap();
+        }
+
+        private static void WriteActivity(CborWriter writer, ActivitySample sample)
+        {
+            writer.WriteStartMap(null);
+
+            writer.WriteTextString("name");
+            writer.WriteTextString(sample.Name);
+
+            writer.WriteTextString("startTimestamp");
+            writer.WriteInt64(sample.StartTimestamp.ToUnixTimeMilliseconds());
+
+            writer.WriteTextString("durationMilliseconds");
+            writer.WriteDouble(sample.DurationMilliseconds);
+
+            writer.WriteTextString("status");
+            writer.WriteTextString(sample.Status);
+
+            if (!string.IsNullOrEmpty(sample.StatusDescription))
+            {
+                writer.WriteTextString("statusDescription");
+                writer.WriteTextString(sample.StatusDescription);
+            }
+
+            writer.WriteTextString("traceId");
+            writer.WriteTextString(sample.TraceId);
+
+            writer.WriteTextString("spanId");
+            writer.WriteTextString(sample.SpanId);
+
+            if (sample.Tags is { Count: > 0 })
+            {
+                writer.WriteTextString("tags");
+                WriteTags(writer, sample.Tags);
+            }
+
+            writer.WriteEndMap();
+        }
+
+        private static void WriteTags(CborWriter writer, Dictionary<string, string?> tags)
+        {
+            writer.WriteStartMap(tags.Count);
+            foreach (var (key, value) in tags)
+            {
+                writer.WriteTextString(key);
+                if (value is null)
+                {
+                    writer.WriteNull();
+                }
+                else
+                {
+                    writer.WriteTextString(value);
+                }
+            }
+            writer.WriteEndMap();
+        }
+    }
 }
