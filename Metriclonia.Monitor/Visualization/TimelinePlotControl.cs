@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Buffers;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using Avalonia;
 using Avalonia.Controls;
@@ -14,6 +16,7 @@ using Avalonia.Media.TextFormatting;
 using Avalonia.Rendering.SceneGraph;
 using Avalonia.Skia;
 using Avalonia.Threading;
+using System.Threading;
 using Metriclonia.Monitor.Infrastructure;
 using Microsoft.Extensions.Logging;
 using SkiaSharp;
@@ -28,6 +31,12 @@ public class TimelinePlotControl : Control
     private static readonly ImmutableSolidColorBrush PlotBackgroundBrush = new(Color.FromArgb(240, 12, 16, 24));
     private static readonly ImmutablePen GridPen = new(new ImmutableSolidColorBrush(Color.FromArgb(35, 255, 255, 255)), 1);
     private static readonly ImmutablePen TriggerMarkerPen = new(new ImmutableSolidColorBrush(Color.FromArgb(200, 255, 153, 0)), 1.5);
+    private static readonly TextLayout EmptyStateLayout = CreateStaticTextLayout("Waiting for metrics...", 16, FontWeight.Medium, Brushes.Gray, TextAlignment.Center);
+    private static readonly TextLayout TriggerLabelLayout = CreateStaticTextLayout("TRIG", 11, FontWeight.SemiBold, Brushes.Orange, TextAlignment.Center);
+
+    private static long s_textLayoutTicks;
+    private static int s_textLayoutCount;
+    private static long s_lastProfileLog;
 
     public static readonly StyledProperty<IEnumerable<TimelineSeries>?> SeriesProperty =
         AvaloniaProperty.Register<TimelinePlotControl, IEnumerable<TimelineSeries>?>(nameof(Series));
@@ -43,6 +52,8 @@ public class TimelinePlotControl : Control
     private TriggerConfiguration? _currentTriggerConfiguration;
     private DateTimeOffset _lastTriggerTimestamp;
     private bool _isHoldActive;
+    private int _renderCounter;
+    private readonly ConditionalWeakTable<TimelineSeries, SeriesTextCache> _seriesTextCaches = new();
 
     static TimelinePlotControl()
     {
@@ -322,6 +333,26 @@ public class TimelinePlotControl : Control
         }
 
         DrawTimeAxis(context, labelWidth, topPadding, plotWidth, plotHeight, startTime, endTime, window.IsTriggered, window.Anchor);
+
+        _renderCounter++;
+        if ((_renderCounter & 63) == 0)
+        {
+            var count = Volatile.Read(ref s_textLayoutCount);
+            if (count > 0)
+            {
+                var ticks = Volatile.Read(ref s_textLayoutTicks);
+                var profileNow = Stopwatch.GetTimestamp();
+                var last = Interlocked.Read(ref s_lastProfileLog);
+                if (last == 0 || profileNow - last >= Stopwatch.Frequency)
+                {
+                    var avgMicroseconds = ticks * 1_000_000.0 / (Stopwatch.Frequency * count);
+                    Logger.LogDebug("TextLayout avg {AverageMicroseconds:F2} µs over {Count} layouts", avgMicroseconds, count);
+                    Interlocked.Exchange(ref s_textLayoutTicks, 0);
+                    Interlocked.Exchange(ref s_textLayoutCount, 0);
+                    Interlocked.Exchange(ref s_lastProfileLog, profileNow);
+                }
+            }
+        }
     }
 
     private (DateTimeOffset Start, DateTimeOffset End, DateTimeOffset Anchor, bool IsTriggered) ComputeWindow(IReadOnlyList<TimelineSeries> allSeries, DateTimeOffset fallbackLatest, double visibleDurationSeconds)
@@ -1179,8 +1210,10 @@ public class TimelinePlotControl : Control
 
     private void DrawEmptyState(DrawingContext context, Rect bounds)
     {
-        var layout = CreateTextLayout("Waiting for metrics...", 16, FontWeight.Medium, Brushes.Gray, TextAlignment.Center, bounds.Width);
-        var location = new Point((bounds.Width - layout.WidthIncludingTrailingWhitespace) / 2, (bounds.Height - layout.Height) / 2);
+        var layout = EmptyStateLayout;
+        var location = new Point(
+            bounds.Left + (bounds.Width - layout.WidthIncludingTrailingWhitespace) / 2,
+            bounds.Top + (bounds.Height - layout.Height) / 2);
         layout.Draw(context, location);
     }
 
@@ -1192,11 +1225,12 @@ public class TimelinePlotControl : Control
 
     private void DrawSeriesLabel(DrawingContext context, TimelineSeries series, Rect labelRect)
     {
-        var nameLayout = CreateTextLayout(series.DisplayName, 13, FontWeight.SemiBold, series.Stroke, TextAlignment.Left, labelRect.Width);
+        var cache = GetSeriesTextCache(series);
+        var nameLayout = GetOrCreateLayout(ref cache.Name, series.DisplayName, 13, FontWeight.SemiBold, series.Stroke, TextAlignment.Left, labelRect.Width);
         nameLayout.Draw(context, labelRect.TopLeft + new Vector(12, 4));
 
         var latestText = $"{series.LatestValue:0.00} {series.Unit}".Trim();
-        var latestLayout = CreateTextLayout(latestText, 12, FontWeight.Medium, Brushes.Gainsboro, TextAlignment.Left, labelRect.Width);
+        var latestLayout = GetOrCreateLayout(ref cache.Latest, latestText, 12, FontWeight.Medium, Brushes.Gainsboro, TextAlignment.Left, labelRect.Width);
         latestLayout.Draw(context, labelRect.TopLeft + new Vector(12, labelRect.Height / 2));
     }
 
@@ -1237,19 +1271,20 @@ public class TimelinePlotControl : Control
                 context.DrawEllipse(series.Stroke, null, renderBuilder.LatestPoint, 3, 3);
             }
 
-            DrawRangeAnnotations(context, laneRect, renderBuilder.Min, renderBuilder.Max, series);
+        var cache = GetSeriesTextCache(series);
+        DrawRangeAnnotations(context, laneRect, renderBuilder.Min, renderBuilder.Max, series, cache);
         }
     }
 
-    private void DrawRangeAnnotations(DrawingContext context, Rect laneRect, double min, double max, TimelineSeries series)
+    private void DrawRangeAnnotations(DrawingContext context, Rect laneRect, double min, double max, TimelineSeries series, SeriesTextCache cache)
     {
-        var minLayout = CreateTextLayout($"min {min:0.00}", 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Right, laneRect.Width);
+        var minLayout = GetOrCreateLayout(ref cache.Min, $"min {min:0.00}", 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Right, laneRect.Width);
         minLayout.Draw(context, new Point(laneRect.Right - minLayout.WidthIncludingTrailingWhitespace - 4, laneRect.Bottom - minLayout.Height - 2));
 
-        var maxLayout = CreateTextLayout($"max {max:0.00}", 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Right, laneRect.Width);
+        var maxLayout = GetOrCreateLayout(ref cache.Max, $"max {max:0.00}", 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Right, laneRect.Width);
         maxLayout.Draw(context, new Point(laneRect.Right - maxLayout.WidthIncludingTrailingWhitespace - 4, laneRect.Top + 2));
 
-        var avgLayout = CreateTextLayout($"avg {series.Average:0.00}", 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Right, laneRect.Width);
+        var avgLayout = GetOrCreateLayout(ref cache.Avg, $"avg {series.Average:0.00}", 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Right, laneRect.Width);
         avgLayout.Draw(context, new Point(laneRect.Right - avgLayout.WidthIncludingTrailingWhitespace - 4, laneRect.Center.Y - avgLayout.Height / 2));
     }
 
@@ -1283,7 +1318,7 @@ public class TimelinePlotControl : Control
         var x = MapTimeToX(anchorTime, labelWidth, plotWidth, startTime, endTime);
         context.DrawLine(TriggerMarkerPen, new Point(x, topPadding), new Point(x, topPadding + plotHeight));
 
-        var label = CreateTextLayout("TRIG", 11, FontWeight.SemiBold, Brushes.Orange, TextAlignment.Center, 40);
+        var label = TriggerLabelLayout;
         label.Draw(context, new Point(x - label.WidthIncludingTrailingWhitespace / 2, topPadding - label.Height - 2));
     }
 
@@ -1803,10 +1838,71 @@ public class TimelinePlotControl : Control
         return $"{sign}{abs * 1_000_000_000:0.###} ns";
     }
 
+    private SeriesTextCache GetSeriesTextCache(TimelineSeries series)
+        => _seriesTextCaches.GetValue(series, static _ => new SeriesTextCache());
+
+    private static TextLayout GetOrCreateLayout(ref CachedLayout cache, string text, double fontSize, FontWeight weight, IBrush brush, TextAlignment alignment, double maxWidth)
+    {
+        const double WidthTolerance = 0.5;
+
+        if (cache.Layout is not null
+            && cache.Text == text
+            && Math.Abs(cache.FontSize - fontSize) < double.Epsilon
+            && cache.Weight == weight
+            && ReferenceEquals(cache.Brush, brush)
+            && cache.Alignment == alignment
+            && Math.Abs(cache.MaxWidth - maxWidth) <= WidthTolerance)
+        {
+            return cache.Layout;
+        }
+
+        cache.Layout?.Dispose();
+        cache.Layout = CreateTextLayout(text, fontSize, weight, brush, alignment, maxWidth);
+        cache.Text = text;
+        cache.FontSize = fontSize;
+        cache.Weight = weight;
+        cache.Brush = brush;
+        cache.Alignment = alignment;
+        cache.MaxWidth = maxWidth;
+        return cache.Layout;
+    }
+
+    private sealed class SeriesTextCache
+    {
+        public CachedLayout Name = new();
+        public CachedLayout Latest = new();
+        public CachedLayout Min = new();
+        public CachedLayout Max = new();
+        public CachedLayout Avg = new();
+    }
+
+    private sealed class CachedLayout
+    {
+        public string? Text;
+        public double FontSize;
+        public FontWeight Weight;
+        public IBrush? Brush;
+        public TextAlignment Alignment;
+        public double MaxWidth;
+        public TextLayout? Layout;
+    }
+
+    private static TextLayout CreateStaticTextLayout(string text, double fontSize, FontWeight weight, IBrush brush, TextAlignment alignment)
+        => new(text, new Typeface("Inter", FontStyle.Normal, weight), fontSize, brush, alignment, TextWrapping.NoWrap, textTrimming: null, textDecorations: null, flowDirection: FlowDirection.LeftToRight, maxWidth: double.PositiveInfinity);
+
     private static TextLayout CreateTextLayout(string text, double fontSize, FontWeight weight, IBrush brush, TextAlignment alignment, double maxWidth)
     {
+        var startTicks = Stopwatch.GetTimestamp();
         var typeface = new Typeface("Inter", FontStyle.Normal, weight);
         var constraint = double.IsFinite(maxWidth) && maxWidth > 0 ? maxWidth : double.PositiveInfinity;
-        return new TextLayout(text, typeface, fontSize, brush, alignment, TextWrapping.NoWrap, textTrimming: null, textDecorations: null, flowDirection: FlowDirection.LeftToRight, maxWidth: constraint);
+        var layout = new TextLayout(text, typeface, fontSize, brush, alignment, TextWrapping.NoWrap, textTrimming: null, textDecorations: null, flowDirection: FlowDirection.LeftToRight, maxWidth: constraint);
+        var elapsed = Stopwatch.GetTimestamp() - startTicks;
+        if (elapsed > 0)
+        {
+            Interlocked.Add(ref s_textLayoutTicks, elapsed);
+            Interlocked.Increment(ref s_textLayoutCount);
+        }
+
+        return layout;
     }
 }
