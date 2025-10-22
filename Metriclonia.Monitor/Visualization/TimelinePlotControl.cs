@@ -10,6 +10,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Immutable;
 using Avalonia.Media.TextFormatting;
@@ -26,11 +27,14 @@ namespace Metriclonia.Monitor.Visualization;
 public class TimelinePlotControl : Control
 {
     private static readonly ILogger Logger = Log.For<TimelinePlotControl>();
-    private const bool EnableRenderTraceLogging = false;
+    private static readonly bool EnableRenderTraceLogging = false;
 
     private static readonly ImmutableSolidColorBrush PlotBackgroundBrush = new(Color.FromArgb(240, 12, 16, 24));
     private static readonly ImmutablePen GridPen = new(new ImmutableSolidColorBrush(Color.FromArgb(35, 255, 255, 255)), 1);
     private static readonly ImmutablePen TriggerMarkerPen = new(new ImmutableSolidColorBrush(Color.FromArgb(200, 255, 153, 0)), 1.5);
+    private static readonly ImmutablePen CrosshairPen = new(0x8CFFFFFF, 1, new ImmutableDashStyle(new[] { 4.0, 4.0 }, 0));
+    private static readonly ImmutablePen HoverBorderPen = new(0xB4465A78, 1);
+    private static readonly ImmutableSolidColorBrush HoverBackgroundBrush = new(Color.FromArgb(220, 12, 16, 24));
     private static readonly TextLayout EmptyStateLayout = CreateStaticTextLayout("Waiting for metrics...", 16, FontWeight.Medium, Brushes.Gray, TextAlignment.Center);
     private static readonly TextLayout TriggerLabelLayout = CreateStaticTextLayout("TRIG", 11, FontWeight.SemiBold, Brushes.Orange, TextAlignment.Center);
 
@@ -54,6 +58,27 @@ public class TimelinePlotControl : Control
     private bool _isHoldActive;
     private int _renderCounter;
     private readonly ConditionalWeakTable<TimelineSeries, SeriesTextCache> _seriesTextCaches = new();
+    private bool _hasManualViewport;
+    private bool _isFollowingLive = true;
+    private bool _suppressDurationSync;
+    private DateTimeOffset _manualViewportStart;
+    private DateTimeOffset _manualViewportEnd;
+    private Rect _visiblePlotRect;
+    private DateTimeOffset _currentWindowStart;
+    private DateTimeOffset _currentWindowEnd;
+    private double _currentWindowDurationSeconds;
+    private double _currentLaneHeight;
+    private IReadOnlyList<TimelineSeries>? _currentVisibleSeries;
+    private (DateTimeOffset Start, DateTimeOffset End, DateTimeOffset Anchor, bool IsTriggered) _lastWindow;
+    private bool _isPointerCaptured;
+    private bool _isDragging;
+    private Point _pointerDownPosition;
+    private DateTimeOffset _dragStart;
+    private DateTimeOffset _dragEnd;
+    private Point _lastPointerPosition;
+    private bool _isPointerOver;
+    private bool _hasHoverTimestamp;
+    private DateTimeOffset _hoverTimestamp;
 
     static TimelinePlotControl()
     {
@@ -62,6 +87,7 @@ public class TimelinePlotControl : Control
 
     public TimelinePlotControl()
     {
+        Focusable = true;
         _clockTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) => InvalidateVisual());
         AttachedToVisualTree += OnAttachedToVisualTree;
         DetachedFromVisualTree += OnDetachedFromVisualTree;
@@ -105,6 +131,10 @@ public class TimelinePlotControl : Control
         }
         else if (change.Property == VisibleDurationSecondsProperty)
         {
+            if (!_suppressDurationSync && _hasManualViewport && change.NewValue is double newDuration)
+            {
+                AdjustManualViewportDuration(newDuration);
+            }
             InvalidateVisual();
         }
         else if (change.Property == TriggerConfigurationProperty)
@@ -273,6 +303,191 @@ public class TimelinePlotControl : Control
         }
     }
 
+    protected override void OnPointerEntered(PointerEventArgs e)
+    {
+        base.OnPointerEntered(e);
+        _isPointerOver = true;
+    }
+
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+        _isPointerOver = false;
+        _hasHoverTimestamp = false;
+        if (_isPointerCaptured)
+        {
+            e.Pointer.Capture(null);
+            _isPointerCaptured = false;
+            _isDragging = false;
+        }
+        InvalidateVisual();
+    }
+
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
+    {
+        base.OnPointerPressed(e);
+
+        if (!IsEffectivelyVisible)
+        {
+            return;
+        }
+
+        var position = e.GetPosition(this);
+        _lastPointerPosition = position;
+        _isPointerOver = true;
+        UpdateHoverTimestamp(position);
+
+        if (e.ClickCount >= 2)
+        {
+            ResetViewportToLive();
+            e.Handled = true;
+            return;
+        }
+
+        var properties = e.GetCurrentPoint(this).Properties;
+        if (properties.IsLeftButtonPressed)
+        {
+            Focus();
+
+            if (!_hasManualViewport || _isFollowingLive)
+            {
+                ActivateManualViewportFromCurrent();
+            }
+
+            _pointerDownPosition = position;
+            _dragStart = _manualViewportStart;
+            _dragEnd = _manualViewportEnd;
+            _isDragging = true;
+            e.Pointer.Capture(this);
+            _isPointerCaptured = true;
+            e.Handled = true;
+        }
+    }
+
+    protected override void OnPointerMoved(PointerEventArgs e)
+    {
+        base.OnPointerMoved(e);
+
+        var position = e.GetPosition(this);
+        _lastPointerPosition = position;
+        _isPointerOver = true;
+        UpdateHoverTimestamp(position);
+
+        if (_isPointerCaptured && _isDragging)
+        {
+            if (_visiblePlotRect.Width <= 0 || _currentWindowDurationSeconds <= 0)
+            {
+                return;
+            }
+
+            var deltaX = position.X - _pointerDownPosition.X;
+            var secondsShift = -deltaX / _visiblePlotRect.Width * _currentWindowDurationSeconds;
+            if (!double.IsFinite(secondsShift))
+            {
+                return;
+            }
+
+            var newStart = _dragStart + TimeSpan.FromSeconds(secondsShift);
+            var newEnd = _dragEnd + TimeSpan.FromSeconds(secondsShift);
+            SetManualViewport(newStart, newEnd, updateDurationProperty: false, clampToData: true);
+            InvalidateVisual();
+            e.Handled = true;
+        }
+        else
+        {
+            InvalidateVisual();
+        }
+    }
+
+    protected override void OnPointerReleased(PointerReleasedEventArgs e)
+    {
+        base.OnPointerReleased(e);
+
+        if (_isPointerCaptured)
+        {
+            e.Pointer.Capture(null);
+            _isPointerCaptured = false;
+            _isDragging = false;
+            e.Handled = true;
+        }
+    }
+
+    protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
+    {
+        base.OnPointerCaptureLost(e);
+        _isPointerCaptured = false;
+        _isDragging = false;
+    }
+
+    protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
+    {
+        base.OnPointerWheelChanged(e);
+
+        var delta = e.Delta.Y;
+        if (Math.Abs(delta) <= double.Epsilon)
+        {
+            return;
+        }
+
+        if (_visiblePlotRect.Width <= 0 || _currentWindowDurationSeconds <= 0)
+        {
+            return;
+        }
+
+        var position = e.GetPosition(this);
+        var ratio = (position.X - _visiblePlotRect.X) / _visiblePlotRect.Width;
+        if (!double.IsFinite(ratio))
+        {
+            return;
+        }
+
+        ratio = Math.Clamp(ratio, 0, 1);
+        var zoomFactor = Math.Pow(1.18, -delta);
+        var newDuration = _currentWindowDurationSeconds * zoomFactor;
+        newDuration = Math.Clamp(newDuration, 0.25, 600);
+
+        var center = _currentWindowStart + TimeSpan.FromSeconds(_currentWindowDurationSeconds * ratio);
+        var newStart = center - TimeSpan.FromSeconds(newDuration * ratio);
+        var newEnd = newStart + TimeSpan.FromSeconds(newDuration);
+
+        SetManualViewport(newStart, newEnd, updateDurationProperty: true, clampToData: true);
+
+        _lastPointerPosition = position;
+        _isPointerOver = true;
+        UpdateHoverTimestamp(position);
+        InvalidateVisual();
+        e.Handled = true;
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+
+        if (e.Handled)
+        {
+            return;
+        }
+
+        switch (e.Key)
+        {
+            case Key.Space:
+            case Key.Home:
+                ResetViewportToLive();
+                e.Handled = true;
+                break;
+            case Key.Add:
+            case Key.OemPlus:
+                ZoomAroundCenter(0.8);
+                e.Handled = true;
+                break;
+            case Key.Subtract:
+            case Key.OemMinus:
+                ZoomAroundCenter(1.25);
+                e.Handled = true;
+                break;
+        }
+    }
+
     public override void Render(DrawingContext context)
     {
         if (EnableRenderTraceLogging)
@@ -311,9 +526,14 @@ public class TimelinePlotControl : Control
         var latestSample = allSeries.Max(static s => s.LastTimestamp);
         var now = DateTimeOffset.UtcNow;
         var fallbackLatest = latestSample != default ? latestSample : now;
-        var window = ComputeWindow(allSeries, fallbackLatest, visibleDuration);
+        var window = ResolveWindow(allSeries, fallbackLatest, visibleDuration);
         var startTime = window.Start;
         var endTime = window.End;
+
+        if (endTime <= startTime)
+        {
+            endTime = startTime + TimeSpan.FromSeconds(Math.Max(1, visibleDuration));
+        }
 
         DrawTimeGrid(context, labelWidth, topPadding, plotWidth, plotHeight, startTime, endTime);
 
@@ -333,6 +553,16 @@ public class TimelinePlotControl : Control
         }
 
         DrawTimeAxis(context, labelWidth, topPadding, plotWidth, plotHeight, startTime, endTime, window.IsTriggered, window.Anchor);
+
+        _lastWindow = window;
+        _currentWindowStart = startTime;
+        _currentWindowEnd = endTime;
+        _currentWindowDurationSeconds = Math.Max(1e-9, (endTime - startTime).TotalSeconds);
+        _currentLaneHeight = laneHeight;
+        _currentVisibleSeries = seriesList;
+        _visiblePlotRect = new Rect(labelWidth, topPadding, plotWidth, plotHeight);
+
+        DrawHoverOverlay(context, seriesList, _visiblePlotRect, startTime, endTime, laneHeight);
 
         _renderCounter++;
         if ((_renderCounter & 63) == 0)
@@ -1837,6 +2067,535 @@ public class TimelinePlotControl : Control
 
         return $"{sign}{abs * 1_000_000_000:0.###} ns";
     }
+
+    private void ZoomAroundCenter(double multiplier)
+    {
+        if (_currentWindowDurationSeconds <= 0)
+        {
+            return;
+        }
+
+        var newDuration = _currentWindowDurationSeconds * multiplier;
+        newDuration = Math.Clamp(newDuration, 0.25, 600);
+        var center = _currentWindowStart + TimeSpan.FromSeconds(_currentWindowDurationSeconds / 2);
+        var half = TimeSpan.FromSeconds(newDuration / 2);
+        var start = center - half;
+        var end = center + half;
+        SetManualViewport(start, end, updateDurationProperty: true, clampToData: true);
+        InvalidateVisual();
+    }
+
+    private void AdjustManualViewportDuration(double newDurationSeconds)
+    {
+        if (newDurationSeconds <= 0)
+        {
+            newDurationSeconds = 0.25;
+        }
+
+        if (!_hasManualViewport)
+        {
+            ActivateManualViewportFromCurrent();
+        }
+
+        var duration = _manualViewportEnd - _manualViewportStart;
+        if (duration <= TimeSpan.Zero)
+        {
+            duration = TimeSpan.FromSeconds(newDurationSeconds);
+        }
+
+        var center = _manualViewportStart + TimeSpan.FromTicks(duration.Ticks / 2);
+        var half = TimeSpan.FromSeconds(newDurationSeconds / 2);
+        var start = center - half;
+        var end = center + half;
+        SetManualViewport(start, end, updateDurationProperty: true, clampToData: true);
+    }
+
+    private void ActivateManualViewportFromCurrent()
+    {
+        if (_currentWindowStart == default && _currentWindowEnd == default)
+        {
+            var fallbackEnd = DateTimeOffset.UtcNow;
+            var fallbackStart = fallbackEnd - TimeSpan.FromSeconds(Math.Max(1, VisibleDurationSeconds));
+            _currentWindowStart = fallbackStart;
+            _currentWindowEnd = fallbackEnd;
+            _currentWindowDurationSeconds = Math.Max(1, VisibleDurationSeconds);
+        }
+
+        _manualViewportStart = _currentWindowStart;
+        _manualViewportEnd = _currentWindowEnd;
+        _hasManualViewport = true;
+        _isFollowingLive = false;
+    }
+
+    private void ResetViewportToLive()
+    {
+        _hasManualViewport = false;
+        _isFollowingLive = true;
+        _manualViewportStart = default;
+        _manualViewportEnd = default;
+        InvalidateVisual();
+    }
+
+    private void SetManualViewport(DateTimeOffset start, DateTimeOffset end, bool updateDurationProperty, bool clampToData)
+    {
+        if (end <= start)
+        {
+            end = start + TimeSpan.FromSeconds(Math.Max(VisibleDurationSeconds, 0.25));
+        }
+
+        _hasManualViewport = true;
+        _isFollowingLive = false;
+
+        if (clampToData && TryGetSeriesExtents(_currentVisibleSeries ?? Series?.ToList(), out var minTimestamp, out var maxTimestamp))
+        {
+            var duration = end - start;
+            if (duration <= TimeSpan.Zero)
+            {
+                duration = TimeSpan.FromSeconds(Math.Max(VisibleDurationSeconds, 0.25));
+            }
+
+            var guardSeconds = Math.Max(0.25, duration.TotalSeconds * 0.1);
+            if (minTimestamp != default)
+            {
+                var minWithGuard = minTimestamp - TimeSpan.FromSeconds(guardSeconds);
+                if (start < minWithGuard)
+                {
+                    start = minWithGuard;
+                    end = start + duration;
+                }
+            }
+
+            if (maxTimestamp != default)
+            {
+                var maxWithGuard = maxTimestamp + TimeSpan.FromSeconds(guardSeconds);
+                if (end > maxWithGuard)
+                {
+                    end = maxWithGuard;
+                    start = end - duration;
+                }
+            }
+        }
+
+        if (end <= start)
+        {
+            end = start + TimeSpan.FromSeconds(Math.Max(VisibleDurationSeconds, 0.25));
+        }
+
+        _manualViewportStart = start;
+        _manualViewportEnd = end;
+
+        if (updateDurationProperty)
+        {
+            var seconds = Math.Max(1e-6, (end - start).TotalSeconds);
+            _suppressDurationSync = true;
+            SetCurrentValue(VisibleDurationSecondsProperty, seconds);
+            _suppressDurationSync = false;
+        }
+    }
+
+    private (DateTimeOffset Start, DateTimeOffset End, DateTimeOffset Anchor, bool IsTriggered) ResolveWindow(IReadOnlyList<TimelineSeries> allSeries, DateTimeOffset fallbackLatest, double visibleDurationSeconds)
+    {
+        var autoWindow = ComputeWindow(allSeries, fallbackLatest, visibleDurationSeconds);
+
+        if (!_hasManualViewport || _isFollowingLive)
+        {
+            _manualViewportStart = autoWindow.Start;
+            _manualViewportEnd = autoWindow.End;
+            return autoWindow;
+        }
+
+        var start = _manualViewportStart;
+        var end = _manualViewportEnd;
+
+        if (end <= start)
+        {
+            end = start + TimeSpan.FromSeconds(Math.Max(visibleDurationSeconds, 0.25));
+        }
+
+        if (TryGetSeriesExtents(allSeries, out var minTimestamp, out var maxTimestamp))
+        {
+            var duration = end - start;
+            if (duration <= TimeSpan.Zero)
+            {
+                duration = TimeSpan.FromSeconds(Math.Max(visibleDurationSeconds, 0.25));
+            }
+
+            var guardSeconds = Math.Max(0.25, duration.TotalSeconds * 0.1);
+            if (minTimestamp != default)
+            {
+                var minWithGuard = minTimestamp - TimeSpan.FromSeconds(guardSeconds);
+                if (start < minWithGuard)
+                {
+                    start = minWithGuard;
+                    end = start + duration;
+                }
+            }
+
+            if (maxTimestamp != default)
+            {
+                var maxWithGuard = maxTimestamp + TimeSpan.FromSeconds(guardSeconds);
+                if (end > maxWithGuard)
+                {
+                    end = maxWithGuard;
+                    start = end - duration;
+                }
+            }
+        }
+
+        if (end <= start)
+        {
+            end = start + TimeSpan.FromSeconds(Math.Max(visibleDurationSeconds, 0.25));
+        }
+
+        _manualViewportStart = start;
+        _manualViewportEnd = end;
+
+        var isTriggered = autoWindow.IsTriggered && autoWindow.Anchor >= start && autoWindow.Anchor <= end;
+        return (start, end, autoWindow.Anchor, isTriggered);
+    }
+
+    private bool TryGetSeriesExtents(IEnumerable<TimelineSeries>? series, out DateTimeOffset minTimestamp, out DateTimeOffset maxTimestamp)
+    {
+        minTimestamp = DateTimeOffset.MaxValue;
+        maxTimestamp = DateTimeOffset.MinValue;
+        var found = false;
+
+        if (series is null)
+        {
+            series = Series;
+        }
+
+        if (series is null)
+        {
+            minTimestamp = default;
+            maxTimestamp = default;
+            return false;
+        }
+
+        foreach (var timelineSeries in series)
+        {
+            var points = timelineSeries.Points;
+            if (points.Count == 0)
+            {
+                continue;
+            }
+
+            for (var i = 0; i < points.Count; i++)
+            {
+                var candidate = points[i].Timestamp;
+                if (candidate == default)
+                {
+                    continue;
+                }
+
+                if (candidate < minTimestamp)
+                {
+                    minTimestamp = candidate;
+                }
+                found = true;
+                break;
+            }
+
+            for (var i = points.Count - 1; i >= 0; i--)
+            {
+                var candidate = points[i].Timestamp;
+                if (candidate == default)
+                {
+                    continue;
+                }
+
+                if (candidate > maxTimestamp)
+                {
+                    maxTimestamp = candidate;
+                }
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            minTimestamp = default;
+            maxTimestamp = default;
+            return false;
+        }
+
+        if (minTimestamp == DateTimeOffset.MaxValue)
+        {
+            minTimestamp = default;
+        }
+
+        if (maxTimestamp == DateTimeOffset.MinValue)
+        {
+            maxTimestamp = default;
+        }
+
+        return minTimestamp != default || maxTimestamp != default;
+    }
+
+    private void UpdateHoverTimestamp(Point position)
+    {
+        if (_visiblePlotRect.Contains(position) && _currentWindowDurationSeconds > 0)
+        {
+            _hasHoverTimestamp = true;
+            _hoverTimestamp = GetTimestampFromPosition(position.X);
+        }
+        else
+        {
+            _hasHoverTimestamp = false;
+        }
+    }
+
+    private DateTimeOffset GetTimestampFromPosition(double x)
+    {
+        if (_currentWindowDurationSeconds <= 0 || _visiblePlotRect.Width <= 0)
+        {
+            return _currentWindowStart;
+        }
+
+        var ratio = (x - _visiblePlotRect.X) / _visiblePlotRect.Width;
+        ratio = Math.Clamp(ratio, 0, 1);
+        return _currentWindowStart + TimeSpan.FromSeconds(ratio * _currentWindowDurationSeconds);
+    }
+
+    private double GetXFromTimestamp(DateTimeOffset timestamp)
+    {
+        if (_currentWindowDurationSeconds <= 0)
+        {
+            return _visiblePlotRect.X;
+        }
+
+        var ratio = (timestamp - _currentWindowStart).TotalSeconds / _currentWindowDurationSeconds;
+        ratio = Math.Clamp(ratio, 0, 1);
+        return _visiblePlotRect.X + ratio * _visiblePlotRect.Width;
+    }
+
+    private void DrawHoverOverlay(DrawingContext context, IReadOnlyList<TimelineSeries> seriesList, Rect plotRect, DateTimeOffset startTime, DateTimeOffset endTime, double laneHeight)
+    {
+        if (!_isPointerOver || !_hasHoverTimestamp || seriesList.Count == 0)
+        {
+            return;
+        }
+
+        if (_currentWindowDurationSeconds <= 0 || plotRect.Width <= 0)
+        {
+            return;
+        }
+
+        var pointer = _lastPointerPosition;
+        if (!plotRect.Contains(pointer))
+        {
+            return;
+        }
+
+        var totalSeconds = _currentWindowDurationSeconds;
+        var searchSeconds = Math.Max(0.01, totalSeconds * 0.05);
+        var hoverTime = _hoverTimestamp;
+
+        var entries = new List<HoverEntry>();
+        for (var index = 0; index < seriesList.Count; index++)
+        {
+            var series = seriesList[index];
+            if (!TryGetNearestPoint(series, hoverTime, searchSeconds, out var point))
+            {
+                continue;
+            }
+
+            var laneTop = plotRect.Top + index * laneHeight;
+            var x = GetXFromTimestamp(point.Timestamp);
+            var y = laneTop + laneHeight / 2;
+            entries.Add(new HoverEntry(series, point, new Point(x, y)));
+        }
+
+        if (entries.Count == 0)
+        {
+            context.DrawLine(CrosshairPen, new Point(pointer.X, plotRect.Top), new Point(pointer.X, plotRect.Bottom));
+            return;
+        }
+
+        context.DrawLine(CrosshairPen, new Point(pointer.X, plotRect.Top), new Point(pointer.X, plotRect.Bottom));
+
+        foreach (var entry in entries)
+        {
+            var brush = new ImmutableSolidColorBrush(entry.Series.Color);
+            context.DrawEllipse(brush, null, entry.Position, 4, 4);
+        }
+
+        var timestampText = hoverTime.ToLocalTime().ToString("HH:mm:ss.fff", CultureInfo.CurrentCulture);
+        var sb = new StringBuilder();
+        sb.AppendLine(timestampText);
+
+        const int MaxEntries = 12;
+        for (var i = 0; i < entries.Count && i < MaxEntries; i++)
+        {
+            var entry = entries[i];
+            var valueText = double.IsFinite(entry.Point.Value)
+                ? entry.Point.Value.ToString("0.###", CultureInfo.InvariantCulture)
+                : "n/a";
+            if (!string.IsNullOrEmpty(entry.Series.Unit))
+            {
+                valueText += $" {entry.Series.Unit}";
+            }
+
+            sb.AppendLine($"{entry.Series.DisplayName}: {valueText}");
+        }
+
+        var text = sb.ToString().TrimEnd();
+        var layout = CreateTextLayout(text, 11, FontWeight.Medium, Brushes.White, TextAlignment.Left, Math.Min(plotRect.Width * 0.6, 360));
+        var padding = new Thickness(12, 10, 12, 12);
+        var width = layout.Width;
+        var height = layout.Height;
+        if (width <= 0)
+        {
+            width = Math.Min(plotRect.Width * 0.6, 360);
+        }
+        if (height <= 0)
+        {
+            height = layout.Height > 0 ? layout.Height : entries.Count * 18 + 18;
+        }
+        var desiredSize = new Size(width + padding.Left + padding.Right, height + padding.Top + padding.Bottom);
+        var originX = pointer.X + 16;
+        if (originX + desiredSize.Width > plotRect.Right - 8)
+        {
+            originX = plotRect.Right - desiredSize.Width - 8;
+        }
+        if (originX < plotRect.Left + 8)
+        {
+            originX = plotRect.Left + 8;
+        }
+
+        var originY = plotRect.Top + 12;
+        var legendRect = new Rect(new Point(originX, originY), desiredSize);
+        context.DrawRectangle(HoverBackgroundBrush, null, legendRect, 6, 6);
+        context.DrawRectangle(null, HoverBorderPen, legendRect, 6, 6);
+        layout.Draw(context, legendRect.Position + new Point(padding.Left, padding.Top));
+    }
+
+    private static bool TryGetNearestPoint(TimelineSeries series, DateTimeOffset target, double horizonSeconds, out MetricPoint point)
+    {
+        var points = series.Points;
+        point = default;
+        if (points.Count == 0)
+        {
+            return false;
+        }
+
+        var low = 0;
+        var high = points.Count - 1;
+        var candidateIndex = -1;
+
+        while (low <= high)
+        {
+            var mid = (low + high) >> 1;
+            var midTimestamp = points[mid].Timestamp;
+
+            if (midTimestamp == default)
+            {
+                if (mid == high)
+                {
+                    high = mid - 1;
+                }
+                else
+                {
+                    low = mid + 1;
+                }
+                continue;
+            }
+
+            var comparison = midTimestamp.CompareTo(target);
+            if (comparison <= 0)
+            {
+                candidateIndex = mid;
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid - 1;
+            }
+        }
+
+        MetricPoint? before = null;
+        MetricPoint? after = null;
+
+        if (candidateIndex >= 0)
+        {
+            for (var index = candidateIndex; index >= 0; index--)
+            {
+                var candidate = points[index];
+                if (candidate.Timestamp == default)
+                {
+                    continue;
+                }
+
+                before = candidate;
+                break;
+            }
+        }
+
+        for (var index = candidateIndex + 1; index < points.Count; index++)
+        {
+            var candidate = points[index];
+            if (candidate.Timestamp == default)
+            {
+                continue;
+            }
+
+            after = candidate;
+            break;
+        }
+
+        MetricPoint? best = null;
+        var bestDelta = double.MaxValue;
+
+        if (before.HasValue)
+        {
+            var delta = Math.Abs((before.Value.Timestamp - target).TotalSeconds);
+            best = before.Value;
+            bestDelta = delta;
+        }
+
+        if (after.HasValue)
+        {
+            var delta = Math.Abs((after.Value.Timestamp - target).TotalSeconds);
+            if (delta < bestDelta)
+            {
+                best = after.Value;
+                bestDelta = delta;
+            }
+        }
+
+        if (!best.HasValue)
+        {
+            // Fallback to first non-default point if all timestamps are default.
+            for (var index = 0; index < points.Count; index++)
+            {
+                var candidate = points[index];
+                if (candidate.Timestamp == default)
+                {
+                    continue;
+                }
+
+                best = candidate;
+                bestDelta = Math.Abs((candidate.Timestamp - target).TotalSeconds);
+                break;
+            }
+        }
+
+        if (!best.HasValue)
+        {
+            return false;
+        }
+
+        if (horizonSeconds > 0 && bestDelta > horizonSeconds)
+        {
+            return false;
+        }
+
+        point = best.Value;
+        return true;
+    }
+
+    private readonly record struct HoverEntry(TimelineSeries Series, MetricPoint Point, Point Position);
 
     private SeriesTextCache GetSeriesTextCache(TimelineSeries series)
         => _seriesTextCaches.GetValue(series, static _ => new SeriesTextCache());

@@ -6,5 +6,5 @@
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="300"
              x:Class="Metriclonia.Monitor.Controls.TimelineView"
              x:CompileBindings="False">
-  <viz:TimelinePlotControl Series="{Binding Series}" VisibleDurationSeconds="{Binding VisibleDurationSeconds}" TriggerConfiguration="{Binding TriggerConfiguration}"/>
+  <viz:TimelinePlotControl Series="{Binding FilteredSeries}" VisibleDurationSeconds="{Binding VisibleDurationSeconds}" TriggerConfiguration="{Binding TriggerConfiguration}"/>
 </UserControl>
