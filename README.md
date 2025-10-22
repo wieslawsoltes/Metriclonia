@@ -33,6 +33,13 @@ export METRICLONIA_METRICS_PORT=6000
 
 On start the console prints detailed logging (minimum level `Trace`) including ingest and render diagnostics. The UI exposes the active series in the left pane and a timeline view on the right.
 
+### Timeline navigation
+
+- Use the filter box above the metric list to slice by meter, instrument, unit, or tags (e.g. `meter:comp render`).
+- Toggle **Visible only** to hide series that have been unchecked.
+- Scroll over the timeline to zoom, drag to pan historic data, and double-click (or press `Space`) to jump back to live capture.
+- A hover legend mirrors Chrome DevTools tooling with precise timestamps and per-series values.
+
 ## Running the producer
 
 ```bash
@@ -78,4 +85,4 @@ You can adjust logging by editing `Infrastructure/Log.cs` or by replacing the lo
 
 ## License
 
-Licensed under the GNU Affero General Public License v3.0. See [LICENSE](LICENSE) for full terms.
+Licensed under the MIT. See [LICENSE](LICENSE) for full terms.

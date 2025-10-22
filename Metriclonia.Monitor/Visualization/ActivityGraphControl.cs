@@ -1,16 +1,37 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
+using Avalonia.Media.Immutable;
 using Avalonia.Media.TextFormatting;
+using Avalonia.Rendering.SceneGraph;
+using Avalonia.Skia;
+using SkiaSharp;
 
 namespace Metriclonia.Monitor.Visualization;
 
 public sealed class ActivityGraphControl : Control
 {
+    private static readonly ImmutableSolidColorBrush BackgroundBrush = new(Color.FromArgb(30, 255, 255, 255));
+    private static readonly ImmutablePen DefaultGridPen = new(new ImmutableSolidColorBrush(Color.FromArgb(40, 255, 255, 255)), 1);
+    private static readonly ImmutableSolidColorBrush DefaultLineBrush = new(Colors.DeepSkyBlue);
+    private static readonly Typeface LabelTypeface = new("Inter", FontStyle.Normal, FontWeight.Normal);
+    private static readonly Typeface LabelTypefaceBold = new("Inter", FontStyle.Normal, FontWeight.SemiBold);
+    private static readonly TextLayout PlaceholderLayout = CreateStaticLayout("Awaiting data", 12, FontWeight.Medium, Brushes.Gray, TextAlignment.Center);
+    private static readonly ImmutableSolidColorBrush StatLabelBackground = new(Color.FromArgb(120, 12, 16, 24));
+
+    private CachedLayout[] _gridLabelCache = { new(), new(), new(), new(), new() };
+    private CachedLayout[] _axisLabelCache = { new(), new(), new(), new(), new() };
+    private CachedLayout _singlePointLayout = new();
+    private CachedLayout _minStatLayout = new();
+    private CachedLayout _avgStatLayout = new();
+    private CachedLayout _maxStatLayout = new();
+
     public static readonly StyledProperty<IEnumerable<ActivityPoint>?> PointsProperty =
         AvaloniaProperty.Register<ActivityGraphControl, IEnumerable<ActivityPoint>?>(nameof(Points));
 
@@ -73,66 +94,153 @@ public sealed class ActivityGraphControl : Control
         base.Render(context);
 
         var bounds = Bounds;
-        context.FillRectangle(new SolidColorBrush(Color.FromArgb(30, 255, 255, 255)), bounds);
+        context.FillRectangle(BackgroundBrush, bounds);
 
-        var list = Points?.ToList();
-        if (list is null || list.Count == 0)
+        var source = Points;
+        if (source is null)
         {
-            DrawPlaceholder(context, bounds, "Awaiting data");
+            DrawPlaceholder(context, bounds, PlaceholderLayout);
             return;
         }
 
-        if (list.Count == 1)
+        IReadOnlyList<ActivityPoint> pointsList;
+        if (source is IReadOnlyList<ActivityPoint> readOnly)
         {
-            DrawSinglePoint(context, bounds, list[0]);
+            pointsList = readOnly;
+        }
+        else
+        {
+            var buffer = new List<ActivityPoint>();
+            foreach (var point in source)
+            {
+                buffer.Add(point);
+            }
+            pointsList = buffer;
+        }
+
+        if (pointsList.Count == 0)
+        {
+            DrawPlaceholder(context, bounds, PlaceholderLayout);
             return;
         }
 
-        var minTimestamp = list.Min(p => p.Timestamp);
-        var maxTimestamp = list.Max(p => p.Timestamp);
-        var totalSeconds = Math.Max(0.001, (maxTimestamp - minTimestamp).TotalSeconds);
-        if (totalSeconds < 0.001)
+        if (pointsList.Count == 1)
         {
-            // Fallback to index positions if timestamps identical.
-            totalSeconds = list.Count - 1;
+            DrawSinglePoint(context, bounds, pointsList[0]);
+            return;
         }
 
-        var minDuration = list.Min(p => p.DurationMilliseconds);
-        var maxDuration = list.Max(p => p.DurationMilliseconds);
+        var metrics = ComputeMetrics(pointsList);
+        var totalSeconds = metrics.TotalSeconds <= 0.001
+            ? Math.Max(1, pointsList.Count - 1)
+            : metrics.TotalSeconds;
+        var minDuration = metrics.MinDuration;
+        var maxDuration = metrics.MaxDuration;
         if (Math.Abs(maxDuration - minDuration) < 0.0001)
         {
             maxDuration = minDuration + 1;
-            minDuration = minDuration - 0.5;
+            minDuration -= 0.5;
         }
-        var averageDuration = list.Average(p => p.DurationMilliseconds);
 
         var padding = new Thickness(16, 12, 16, 24);
         var plotRect = new Rect(bounds.Position + new Point(padding.Left, padding.Top),
             new Size(Math.Max(10, bounds.Width - padding.Left - padding.Right), Math.Max(10, bounds.Height - padding.Top - padding.Bottom)));
 
-        DrawGrid(context, plotRect, minDuration, maxDuration);
-        DrawStats(context, plotRect, minDuration, maxDuration, averageDuration);
-        DrawLine(context, plotRect, list, minTimestamp, totalSeconds, minDuration, maxDuration);
-        DrawAxis(context, plotRect, minTimestamp, maxTimestamp);
+        if (plotRect.Width <= 0 || plotRect.Height <= 0)
+        {
+            DrawPlaceholder(context, bounds, PlaceholderLayout);
+            return;
+        }
+
+        var gridPen = ResolveGridPen(GridBrush);
+        DrawGrid(context, plotRect, minDuration, maxDuration, gridPen);
+
+        var lineBrushColor = (LineBrush as ISolidColorBrush)?.Color ?? DefaultLineBrush.Color;
+        DrawStats(context, plotRect, minDuration, maxDuration, metrics.AverageDuration, lineBrushColor);
+
+        using var builder = ActivityLineRenderBuilder.Create(plotRect, pointsList, metrics.MinTimestamp, totalSeconds, minDuration, maxDuration);
+        if (builder is not null)
+        {
+            var lineBrush = LineBrush ?? DefaultLineBrush;
+            var scheduled = false;
+            if (builder.PointCount >= 2 && LineBrush is ISolidColorBrush)
+            {
+                var operation = builder.CreateSkiaOperation(lineBrushColor);
+                if (operation is not null)
+                {
+                    context.Custom(operation);
+                    scheduled = true;
+                }
+            }
+
+            if (!scheduled)
+            {
+                builder.DrawFallback(context, lineBrush);
+            }
+
+            if (builder.HasLastPoint)
+            {
+                context.DrawEllipse(lineBrush, null, builder.LastPoint, 4, 4);
+            }
+        }
+
+        DrawAxis(context, plotRect, metrics.MinTimestamp, metrics.MaxTimestamp);
     }
 
-    private void DrawPlaceholder(DrawingContext context, Rect bounds, string text)
+    private static ActivityMetrics ComputeMetrics(IReadOnlyList<ActivityPoint> points)
     {
-        var layout = CreateTextLayout(text, 12, FontWeight.Medium, Brushes.Gray, bounds.Width - 24);
+        var first = points[0];
+        var minTimestamp = first.Timestamp;
+        var maxTimestamp = first.Timestamp;
+        var minDuration = first.DurationMilliseconds;
+        var maxDuration = first.DurationMilliseconds;
+        double sumDuration = 0;
+
+        for (var i = 0; i < points.Count; i++)
+        {
+            var point = points[i];
+            if (point.Timestamp < minTimestamp)
+            {
+                minTimestamp = point.Timestamp;
+            }
+
+            if (point.Timestamp > maxTimestamp)
+            {
+                maxTimestamp = point.Timestamp;
+            }
+
+            var duration = point.DurationMilliseconds;
+            if (duration < minDuration)
+            {
+                minDuration = duration;
+            }
+            else if (duration > maxDuration)
+            {
+                maxDuration = duration;
+            }
+
+            sumDuration += duration;
+        }
+
+        var totalSeconds = (maxTimestamp - minTimestamp).TotalSeconds;
+        return new ActivityMetrics(minTimestamp, maxTimestamp, minDuration, maxDuration, sumDuration / points.Count, totalSeconds);
+    }
+
+    private void DrawPlaceholder(DrawingContext context, Rect bounds, TextLayout layout)
+    {
         var origin = new Point(bounds.Center.X - layout.WidthIncludingTrailingWhitespace / 2, bounds.Center.Y - layout.Height / 2);
         layout.Draw(context, origin);
     }
 
     private void DrawSinglePoint(DrawingContext context, Rect bounds, ActivityPoint point)
     {
-        DrawPlaceholder(context, bounds, $"{point.DurationMilliseconds:0.000} ms at {point.Timestamp:HH:mm:ss.fff}");
+        var text = $"{point.DurationMilliseconds:0.000} ms at {point.Timestamp:HH:mm:ss.fff}";
+        var layout = GetOrCreateLayout(ref _singlePointLayout, text, 12, FontWeight.Medium, Brushes.Gray, TextAlignment.Center, bounds.Width - 24);
+        DrawPlaceholder(context, bounds, layout);
     }
 
-    private void DrawGrid(DrawingContext context, Rect rect, double minDuration, double maxDuration)
+    private void DrawGrid(DrawingContext context, Rect rect, double minDuration, double maxDuration, ImmutablePen pen)
     {
-        var brush = GridBrush ?? new SolidColorBrush(Color.FromArgb(40, 255, 255, 255));
-        var pen = new Pen(brush, 1);
-
         const int horizontalLines = 4;
         for (var i = 0; i <= horizontalLines; i++)
         {
@@ -140,57 +248,23 @@ public sealed class ActivityGraphControl : Control
             context.DrawLine(pen, new Point(rect.Left, y), new Point(rect.Right, y));
 
             var value = maxDuration - (maxDuration - minDuration) * i / horizontalLines;
-            var label = CreateTextLayout($"{value:0.000} ms", 10, FontWeight.Normal, Brushes.Gray, 80);
+            var label = GetOrCreateLayout(ref _gridLabelCache[i], $"{value:0.000} ms", 10, FontWeight.Normal, Brushes.Gray, TextAlignment.Left, 80);
             label.Draw(context, new Point(rect.Left + 4, y - label.Height - 2));
         }
     }
 
-    private void DrawLine(DrawingContext context, Rect rect, IList<ActivityPoint> points, DateTimeOffset minTimestamp, double totalSeconds, double minDuration, double maxDuration)
+    private void DrawStats(DrawingContext context, Rect rect, double min, double max, double avg, Color baseColor)
     {
-        var geometry = new StreamGeometry();
-        using (var ctx = geometry.Open())
-        {
-            for (var i = 0; i < points.Count; i++)
-            {
-                var point = points[i];
-                var x = rect.Left + CalculateX(minTimestamp, totalSeconds, points.Count, i, point.Timestamp) * rect.Width;
-                var y = rect.Bottom - (point.DurationMilliseconds - minDuration) / (maxDuration - minDuration) * rect.Height;
-                var current = new Point(x, y);
+        var minBrush = new SolidColorBrush(Color.FromArgb(140, baseColor.R, baseColor.G, baseColor.B));
+        var avgBrush = new SolidColorBrush(baseColor);
+        var maxBrush = new SolidColorBrush(Color.FromArgb(190, baseColor.R, baseColor.G, baseColor.B));
 
-                if (i == 0)
-                {
-                    ctx.BeginFigure(current, false);
-                }
-                else
-                {
-                    ctx.LineTo(current);
-                }
-            }
-        }
-
-        var lineBrush = LineBrush ?? Brushes.DeepSkyBlue;
-        var pen = new Pen(lineBrush, 2) { LineJoin = PenLineJoin.Round };
-        context.DrawGeometry(null, pen, geometry);
-
-        var lastPoint = points[^1];
-        var lastX = rect.Left + CalculateX(minTimestamp, totalSeconds, points.Count, points.Count - 1, lastPoint.Timestamp) * rect.Width;
-        var lastY = rect.Bottom - (lastPoint.DurationMilliseconds - minDuration) / (maxDuration - minDuration) * rect.Height;
-        context.DrawEllipse(lineBrush, null, new Point(lastX, lastY), 4, 4);
+        DrawStatLine(context, rect, min, minBrush, "min", min, max, ref _minStatLayout);
+        DrawStatLine(context, rect, avg, avgBrush, "avg", min, max, ref _avgStatLayout);
+        DrawStatLine(context, rect, max, maxBrush, "max", min, max, ref _maxStatLayout);
     }
 
-    private void DrawStats(DrawingContext context, Rect rect, double min, double max, double avg)
-    {
-        var baseBrush = (LineBrush as ISolidColorBrush)?.Color ?? Colors.DeepSkyBlue;
-        var minBrush = new SolidColorBrush(Color.FromArgb(140, baseBrush.R, baseBrush.G, baseBrush.B));
-        var avgBrush = new SolidColorBrush(baseBrush);
-        var maxBrush = new SolidColorBrush(Color.FromArgb(190, baseBrush.R, baseBrush.G, baseBrush.B));
-
-        DrawStatLine(context, rect, min, minBrush, "min", min, max);
-        DrawStatLine(context, rect, avg, avgBrush, "avg", min, max);
-        DrawStatLine(context, rect, max, maxBrush, "max", min, max);
-    }
-
-    private void DrawStatLine(DrawingContext context, Rect rect, double value, IBrush brush, string label, double minValue, double maxValue)
+    private void DrawStatLine(DrawingContext context, Rect rect, double value, IBrush brush, string label, double minValue, double maxValue, ref CachedLayout cache)
     {
         if (double.IsNaN(value) || rect.Height <= 0)
         {
@@ -201,33 +275,19 @@ public sealed class ActivityGraphControl : Control
         var normalized = Math.Clamp((value - minValue) / range, 0, 1);
         var y = rect.Bottom - normalized * rect.Height;
 
-        var pen = new Pen(brush, label == "avg" ? 2 : 1) { DashStyle = label == "avg" ? DashStyle.Dot : DashStyle.Dash };
+        var pen = new Pen(brush, label == "avg" ? 2 : 1)
+        {
+            DashStyle = label == "avg" ? DashStyle.Dot : DashStyle.Dash
+        };
         context.DrawLine(pen, new Point(rect.Left, y), new Point(rect.Right, y));
 
-        var layout = CreateTextLayout($"{label} {value:0.000} ms", 10, FontWeight.SemiBold, brush, 120);
-        var background = new SolidColorBrush(Color.FromArgb(120, 12, 16, 24));
+        var layout = GetOrCreateLayout(ref cache, $"{label} {value:0.000} ms", 10, FontWeight.SemiBold, brush, TextAlignment.Left, 120);
         var padding = new Thickness(4, 2);
         var size = new Size(layout.WidthIncludingTrailingWhitespace + padding.Left + padding.Right, layout.Height + padding.Top + padding.Bottom);
         var origin = new Point(rect.Right - size.Width - 4, Math.Clamp(y - size.Height / 2, rect.Top, rect.Bottom - size.Height));
 
-        context.FillRectangle(background, new Rect(origin, size), 6);
+        context.FillRectangle(StatLabelBackground, new Rect(origin, size), 6);
         layout.Draw(context, origin + new Point(padding.Left, padding.Top));
-    }
-
-    private static double CalculateX(DateTimeOffset minTimestamp, double totalSeconds, int count, int index, DateTimeOffset timestamp)
-    {
-        if (totalSeconds <= 0)
-        {
-            return count <= 1 ? 0 : (double)index / (count - 1);
-        }
-
-        var elapsed = (timestamp - minTimestamp).TotalSeconds;
-        if (double.IsNaN(elapsed) || double.IsInfinity(elapsed))
-        {
-            return count <= 1 ? 0 : (double)index / (count - 1);
-        }
-
-        return Math.Clamp(elapsed / totalSeconds, 0, 1);
     }
 
     private void DrawAxis(DrawingContext context, Rect rect, DateTimeOffset minTimestamp, DateTimeOffset maxTimestamp)
@@ -241,14 +301,292 @@ public sealed class ActivityGraphControl : Control
             var progress = (double)i / segments;
             var x = rect.Left + progress * rect.Width;
             var timestamp = minTimestamp + TimeSpan.FromSeconds(progress * totalSeconds);
-            var label = CreateTextLayout(timestamp.ToLocalTime().ToString("HH:mm:ss"), 10, FontWeight.Normal, brush, 80);
+            var label = GetOrCreateLayout(ref _axisLabelCache[i], timestamp.ToLocalTime().ToString("HH:mm:ss"), 10, FontWeight.Normal, brush, TextAlignment.Center, 80);
             label.Draw(context, new Point(x - label.WidthIncludingTrailingWhitespace / 2, rect.Bottom + 4));
         }
     }
 
-    private static TextLayout CreateTextLayout(string text, double fontSize, FontWeight weight, IBrush brush, double maxWidth)
+    private static ImmutablePen ResolveGridPen(IBrush? brush)
     {
-        var typeface = new Typeface("Inter", FontStyle.Normal, weight);
-        return new TextLayout(text, typeface, fontSize, brush, TextAlignment.Left, TextWrapping.NoWrap, maxWidth: maxWidth);
+        if (brush is null)
+        {
+            return DefaultGridPen;
+        }
+
+        if (brush is ImmutableSolidColorBrush immutableSolid)
+        {
+            return new ImmutablePen(immutableSolid, 1);
+        }
+
+        return new ImmutablePen(brush.ToImmutable(), 1);
+    }
+
+    private static TextLayout GetOrCreateLayout(ref CachedLayout cache, string text, double fontSize, FontWeight weight, IBrush brush, TextAlignment alignment, double maxWidth)
+    {
+        const double WidthTolerance = 0.5;
+
+        if (cache.Layout is not null
+            && cache.Text == text
+            && Math.Abs(cache.FontSize - fontSize) < double.Epsilon
+            && cache.Weight == weight
+            && ReferenceEquals(cache.Brush, brush)
+            && cache.Alignment == alignment
+            && Math.Abs(cache.MaxWidth - maxWidth) <= WidthTolerance)
+        {
+            return cache.Layout;
+        }
+
+        cache.Layout?.Dispose();
+        cache.Layout = CreateTextLayout(text, fontSize, weight, brush, alignment, maxWidth);
+        cache.Text = text;
+        cache.FontSize = fontSize;
+        cache.Weight = weight;
+        cache.Brush = brush;
+        cache.Alignment = alignment;
+        cache.MaxWidth = maxWidth;
+        return cache.Layout;
+    }
+
+    private static TextLayout CreateStaticLayout(string text, double fontSize, FontWeight weight, IBrush brush, TextAlignment alignment)
+        => new(text, ResolveTypeface(weight), fontSize, brush, alignment, TextWrapping.NoWrap, textTrimming: null, textDecorations: null, flowDirection: FlowDirection.LeftToRight, maxWidth: double.PositiveInfinity);
+
+    private static TextLayout CreateTextLayout(string text, double fontSize, FontWeight weight, IBrush brush, TextAlignment alignment, double maxWidth)
+    {
+        var typeface = ResolveTypeface(weight);
+        var constraint = double.IsFinite(maxWidth) && maxWidth > 0 ? maxWidth : double.PositiveInfinity;
+        return new TextLayout(text, typeface, fontSize, brush, alignment, TextWrapping.NoWrap, textTrimming: null, textDecorations: null, flowDirection: FlowDirection.LeftToRight, maxWidth: constraint);
+    }
+
+    private static Typeface ResolveTypeface(FontWeight weight)
+    {
+        if (weight == FontWeight.Normal)
+        {
+            return LabelTypeface;
+        }
+
+        if (weight == FontWeight.SemiBold)
+        {
+            return LabelTypefaceBold;
+        }
+
+        return new Typeface("Inter", FontStyle.Normal, weight);
+    }
+
+    private sealed class ActivityLineRenderBuilder : IDisposable
+    {
+        private readonly Rect _rect;
+        private readonly DateTimeOffset _minTimestamp;
+        private readonly double _totalSeconds;
+        private readonly double _minDuration;
+        private readonly double _range;
+
+        private Point[]? _points;
+        private SKPoint[]? _skPoints;
+        private int _count;
+        private bool _skTransferred;
+        private Point _lastPoint;
+        private bool _hasLastPoint;
+
+        private ActivityLineRenderBuilder(Rect rect, DateTimeOffset minTimestamp, double totalSeconds, double minDuration, double maxDuration)
+        {
+            _rect = rect;
+            _minTimestamp = minTimestamp;
+            _totalSeconds = totalSeconds;
+            _minDuration = minDuration;
+            _range = Math.Max(0.0001, maxDuration - minDuration);
+        }
+
+        public static ActivityLineRenderBuilder? Create(Rect rect, IReadOnlyList<ActivityPoint> points, DateTimeOffset minTimestamp, double totalSeconds, double minDuration, double maxDuration)
+        {
+            var builder = new ActivityLineRenderBuilder(rect, minTimestamp, totalSeconds, minDuration, maxDuration);
+            return builder.Build(points) ? builder : null;
+        }
+
+        public int PointCount => _count;
+        public bool HasLastPoint => _hasLastPoint;
+        public Point LastPoint => _lastPoint;
+
+        private bool Build(IReadOnlyList<ActivityPoint> points)
+        {
+            var count = points.Count;
+            if (count == 0)
+            {
+                return false;
+            }
+
+            var width = Math.Max(1, _rect.Width);
+            var height = Math.Max(1, _rect.Height);
+            var pointArray = ArrayPool<Point>.Shared.Rent(count);
+            var skArray = ArrayPool<SKPoint>.Shared.Rent(count);
+
+            for (var i = 0; i < count; i++)
+            {
+                var point = points[i];
+
+                double progress;
+                if (_totalSeconds <= 0)
+                {
+                    progress = count <= 1 ? 0 : (double)i / (count - 1);
+                }
+                else
+                {
+                    var elapsed = (point.Timestamp - _minTimestamp).TotalSeconds;
+                    progress = Math.Clamp(elapsed / _totalSeconds, 0, 1);
+                }
+
+                var normalized = Math.Clamp((point.DurationMilliseconds - _minDuration) / _range, 0, 1);
+                var x = _rect.Left + progress * width;
+                var y = _rect.Bottom - normalized * height;
+                var mapped = new Point(x, y);
+                pointArray[i] = mapped;
+                skArray[i] = new SKPoint((float)x, (float)y);
+            }
+
+            _points = pointArray;
+            _skPoints = skArray;
+            _count = count;
+            _hasLastPoint = count > 0;
+            _lastPoint = count > 0 ? pointArray[count - 1] : default;
+            return true;
+        }
+
+        public ActivityLineDrawOperation? CreateSkiaOperation(Color color)
+        {
+            if (_skPoints is null || _count == 0)
+            {
+                return null;
+            }
+
+            _skTransferred = true;
+            var operation = new ActivityLineDrawOperation(_rect, _skPoints, _count, color);
+            _skPoints = null;
+            return operation;
+        }
+
+        public void DrawFallback(DrawingContext context, IBrush brush)
+        {
+            if (_points is null || _count == 0)
+            {
+                return;
+            }
+
+            var pen = new Pen(brush, 2) { LineJoin = PenLineJoin.Round };
+            var geometry = new StreamGeometry();
+            using (var ctx = geometry.Open())
+            {
+                ctx.BeginFigure(_points[0], false);
+                for (var i = 1; i < _count; i++)
+                {
+                    ctx.LineTo(_points[i]);
+                }
+            }
+
+            context.DrawGeometry(null, pen, geometry);
+        }
+
+        public void Dispose()
+        {
+            if (_points is not null)
+            {
+                ArrayPool<Point>.Shared.Return(_points);
+                _points = null;
+            }
+
+            if (!_skTransferred && _skPoints is not null)
+            {
+                ArrayPool<SKPoint>.Shared.Return(_skPoints);
+            }
+
+            _skPoints = null;
+        }
+    }
+
+    private sealed class ActivityLineDrawOperation : ICustomDrawOperation
+    {
+        private readonly Rect _bounds;
+        private readonly SKPoint[] _points;
+        private readonly int _count;
+        private readonly Color _color;
+
+        public ActivityLineDrawOperation(Rect bounds, SKPoint[] points, int count, Color color)
+        {
+            _bounds = bounds;
+            _points = points;
+            _count = count;
+            _color = color;
+        }
+
+        public Rect Bounds => _bounds;
+
+        public void Render(ImmediateDrawingContext context)
+        {
+            var feature = context.TryGetFeature(typeof(ISkiaSharpApiLeaseFeature)) as ISkiaSharpApiLeaseFeature;
+            if (feature is null)
+            {
+                return;
+            }
+
+            using var lease = feature.Lease();
+            var canvas = lease.SkCanvas;
+
+            using var paint = new SKPaint
+            {
+                Style = SKPaintStyle.Stroke,
+                Color = new SKColor(_color.R, _color.G, _color.B, _color.A),
+                StrokeWidth = 2f,
+                StrokeJoin = SKStrokeJoin.Round,
+                StrokeCap = SKStrokeCap.Round,
+                IsAntialias = true
+            };
+
+            using var path = new SKPath();
+            path.MoveTo(_points[0]);
+            for (var i = 1; i < _count; i++)
+            {
+                path.LineTo(_points[i]);
+            }
+
+            canvas.DrawPath(path, paint);
+        }
+
+        public void Dispose()
+        {
+            ArrayPool<SKPoint>.Shared.Return(_points);
+        }
+
+        public bool HitTest(Point p) => _bounds.Contains(p);
+
+        public bool Equals(ICustomDrawOperation? other) => ReferenceEquals(this, other);
+    }
+
+    private sealed class CachedLayout
+    {
+        public string? Text;
+        public double FontSize;
+        public FontWeight Weight;
+        public IBrush? Brush;
+        public TextAlignment Alignment;
+        public double MaxWidth;
+        public TextLayout? Layout;
+    }
+
+    private readonly struct ActivityMetrics
+    {
+        public ActivityMetrics(DateTimeOffset minTimestamp, DateTimeOffset maxTimestamp, double minDuration, double maxDuration, double averageDuration, double totalSeconds)
+        {
+            MinTimestamp = minTimestamp;
+            MaxTimestamp = maxTimestamp;
+            MinDuration = minDuration;
+            MaxDuration = maxDuration;
+            AverageDuration = averageDuration;
+            TotalSeconds = totalSeconds;
+        }
+
+        public DateTimeOffset MinTimestamp { get; }
+        public DateTimeOffset MaxTimestamp { get; }
+        public double MinDuration { get; }
+        public double MaxDuration { get; }
+        public double AverageDuration { get; }
+        public double TotalSeconds { get; }
     }
 }

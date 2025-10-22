@@ -14,11 +14,11 @@ public static class BinaryEnvelopeSerializer
         return writer.Encode();
     }
 
-    public static bool TryDeserialize(ReadOnlySpan<byte> payload, out MonitoringEnvelope? envelope)
+    public static bool TryDeserialize(ReadOnlyMemory<byte> payload, out MonitoringEnvelope? envelope)
     {
         try
         {
-            var reader = new CborReader(payload.ToArray(), CborConformanceMode.Lax);
+            var reader = new CborReader(payload, CborConformanceMode.Lax);
             envelope = ReadEnvelope(reader);
             return envelope is not null && reader.BytesRemaining == 0;
         }

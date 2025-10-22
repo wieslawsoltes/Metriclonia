@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
@@ -30,6 +31,22 @@ public sealed class MasterFlameChartControl : Control
     private static readonly Dictionary<string, CategoryDefinition> Categories;
     private static readonly Dictionary<string, string> MetricCategoryLookup;
     private static readonly Dictionary<string, string> ActivityCategoryLookup;
+
+    private static readonly ImmutableSolidColorBrush BackgroundBrush = new(Color.FromArgb(245, 10, 14, 20));
+    private static readonly ImmutablePen GridPen = new(new ImmutableSolidColorBrush(Color.FromArgb(35, 255, 255, 255)), 1);
+    private static readonly ImmutableSolidColorBrush RowEvenBrush = new(Color.FromArgb(22, 255, 255, 255));
+    private static readonly ImmutableSolidColorBrush RowOddBrush = new(Color.FromArgb(12, 255, 255, 255));
+    private static readonly ImmutableSolidColorBrush LabelEvenBrush = new(Color.FromArgb(32, 255, 255, 255));
+    private static readonly ImmutableSolidColorBrush LabelOddBrush = new(Color.FromArgb(16, 255, 255, 255));
+    private static readonly Typeface NormalTypeface = new("Inter", FontStyle.Normal, FontWeight.Normal);
+    private static readonly Typeface SemiBoldTypeface = new("Inter", FontStyle.Normal, FontWeight.SemiBold);
+    private static readonly Typeface MediumTypeface = new("Inter", FontStyle.Normal, FontWeight.Medium);
+
+    private readonly CachedLayout[] _timeAxisLabelCache = { new(), new(), new(), new(), new(), new(), new() };
+    private readonly Dictionary<int, CachedLayout> _rowLabelCache = new();
+    private readonly Dictionary<string, CachedLayout> _frameLabelCache = new(StringComparer.Ordinal);
+    private CachedLayout _titleLayout = new();
+    private CachedLayout _emptyLayout = new();
 
     private readonly HashSet<TimelineSeries> _metricSubscriptions = new();
     private readonly HashSet<ActivitySeries> _activitySubscriptions = new();
@@ -300,7 +317,7 @@ public sealed class MasterFlameChartControl : Control
         base.Render(context);
 
         var bounds = Bounds;
-        context.FillRectangle(new SolidColorBrush(Color.FromArgb(245, 10, 14, 20)), bounds);
+        context.FillRectangle(BackgroundBrush, bounds);
 
         var seriesList = Series?.Where(static s => s.IsVisible).ToList() ?? new List<TimelineSeries>();
         var activityList = Activities?.ToList() ?? new List<ActivitySeries>();
@@ -365,7 +382,7 @@ public sealed class MasterFlameChartControl : Control
 
         DrawTimeAxis(context, chartRect, startTime, endTime);
 
-        var title = CreateTextLayout("Master Flame Graph", 18, FontWeight.SemiBold, Brushes.Gainsboro, TextAlignment.Left, plotWidth + labelColumnWidth);
+        var title = GetOrCreateLayout(ref _titleLayout, "Master Flame Graph", 18, FontWeight.SemiBold, Brushes.Gainsboro, TextAlignment.Left, plotWidth + labelColumnWidth);
         title.Draw(context, new Point(sidePadding, 8));
     }
 
@@ -639,7 +656,7 @@ public sealed class MasterFlameChartControl : Control
 
         if (width > 60)
         {
-            var layout = CreateTextLayout(frame.Label, 11, FontWeight.Medium, Brushes.White, TextAlignment.Center, rect.Width - 8);
+            var layout = GetFrameLabelLayout(frame.Label, rect.Width - 8);
             var position = new Point(rect.Left + (rect.Width - layout.WidthIncludingTrailingWhitespace) / 2, rect.Top + (rect.Height - layout.Height) / 2);
             layout.Draw(context, position);
         }
@@ -652,6 +669,8 @@ public sealed class MasterFlameChartControl : Control
             return;
         }
 
+        var observedDepths = new HashSet<int>();
+
         foreach (var (depth, label) in rowLabels.OrderBy(static kvp => kvp.Key))
         {
             if (string.IsNullOrWhiteSpace(label))
@@ -661,12 +680,28 @@ public sealed class MasterFlameChartControl : Control
 
             var rowTop = chartRect.Top + depth * (rowHeight + rowSpacing);
             var labelRect = new Rect(sidePadding, rowTop, labelColumnWidth - 8, rowHeight);
-            var background = depth % 2 == 0 ? Color.FromArgb(32, 255, 255, 255) : Color.FromArgb(16, 255, 255, 255);
-            context.FillRectangle(new SolidColorBrush(background), labelRect);
+            context.FillRectangle(depth % 2 == 0 ? LabelEvenBrush : LabelOddBrush, labelRect);
 
-            var layout = CreateTextLayout(label, 12, FontWeight.SemiBold, Brushes.Gainsboro, TextAlignment.Left, labelRect.Width - 12);
+            if (!_rowLabelCache.TryGetValue(depth, out var cached))
+            {
+                cached = new CachedLayout();
+                _rowLabelCache[depth] = cached;
+            }
+
+            var layout = GetOrCreateLayout(ref cached, label, 12, FontWeight.SemiBold, Brushes.Gainsboro, TextAlignment.Left, labelRect.Width - 12);
             var textPosition = new Point(labelRect.Left + 8, labelRect.Top + Math.Max(2, (labelRect.Height - layout.Height) / 2));
             layout.Draw(context, textPosition);
+            observedDepths.Add(depth);
+        }
+
+        if (_rowLabelCache.Count > observedDepths.Count)
+        {
+            var toRemove = _rowLabelCache.Keys.Where(depth => !observedDepths.Contains(depth)).ToList();
+            foreach (var depth in toRemove)
+            {
+                _rowLabelCache[depth].Clear();
+                _rowLabelCache.Remove(depth);
+            }
         }
 
         var divider = new Pen(new SolidColorBrush(Color.FromArgb(80, 255, 255, 255)), 1);
@@ -685,21 +720,18 @@ public sealed class MasterFlameChartControl : Control
 
     private static void DrawRowBackground(DrawingContext context, Rect rowRect, int depth)
     {
-        var alpha = depth % 2 == 0 ? (byte)22 : (byte)12;
-        var color = Color.FromArgb(alpha, 255, 255, 255);
-        context.FillRectangle(new SolidColorBrush(color), rowRect);
+        context.FillRectangle(depth % 2 == 0 ? RowEvenBrush : RowOddBrush, rowRect);
     }
 
     private static void DrawTimeGrid(DrawingContext context, Rect chartRect, int rows, double rowHeight, double rowSpacing)
     {
-        var pen = new Pen(new SolidColorBrush(Color.FromArgb(35, 255, 255, 255)), 1);
         const int steps = 6;
 
         for (var i = 0; i <= steps; i++)
         {
             var progress = (double)i / steps;
             var x = chartRect.Left + progress * chartRect.Width;
-            context.DrawLine(pen, new Point(x, chartRect.Top), new Point(x, chartRect.Bottom));
+            context.DrawLine(GridPen, new Point(x, chartRect.Top), new Point(x, chartRect.Bottom));
         }
 
         for (var depth = 0; depth <= rows; depth++)
@@ -710,11 +742,11 @@ public sealed class MasterFlameChartControl : Control
                 continue;
             }
 
-            context.DrawLine(pen, new Point(chartRect.Left, y), new Point(chartRect.Right, y));
+            context.DrawLine(GridPen, new Point(chartRect.Left, y), new Point(chartRect.Right, y));
         }
     }
 
-    private static void DrawTimeAxis(DrawingContext context, Rect chartRect, DateTimeOffset startTime, DateTimeOffset endTime)
+    private void DrawTimeAxis(DrawingContext context, Rect chartRect, DateTimeOffset startTime, DateTimeOffset endTime)
     {
         const int steps = 6;
         var duration = Math.Max(0.001, (endTime - startTime).TotalSeconds);
@@ -726,25 +758,71 @@ public sealed class MasterFlameChartControl : Control
             var label = timestamp.ToLocalTime().ToString("HH:mm:ss.fff");
 
             var x = chartRect.Left + progress * chartRect.Width;
-            var textLayout = CreateTextLayout(label, 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Center, 120);
+            var textLayout = GetOrCreateLayout(ref _timeAxisLabelCache[i], label, 11, FontWeight.Normal, Brushes.Gray, TextAlignment.Center, 120);
             var position = new Point(x - textLayout.WidthIncludingTrailingWhitespace / 2, chartRect.Bottom + 8);
             textLayout.Draw(context, position);
         }
     }
 
-    private static void DrawEmptyState(DrawingContext context, Rect bounds, string message)
+    private void DrawEmptyState(DrawingContext context, Rect bounds, string message)
     {
-        var layout = CreateTextLayout(message, 14, FontWeight.Medium, Brushes.Gray, TextAlignment.Center, bounds.Width);
+        var layout = GetOrCreateLayout(ref _emptyLayout, message, 14, FontWeight.Medium, Brushes.Gray, TextAlignment.Center, bounds.Width);
         var location = new Point((bounds.Width - layout.WidthIncludingTrailingWhitespace) / 2, (bounds.Height - layout.Height) / 2);
         layout.Draw(context, location);
     }
 
+    private TextLayout GetFrameLabelLayout(string text, double maxWidth)
+    {
+        if (!_frameLabelCache.TryGetValue(text, out var cached))
+        {
+            cached = new CachedLayout();
+            _frameLabelCache[text] = cached;
+        }
+
+        return GetOrCreateLayout(ref cached, text, 11, FontWeight.Medium, Brushes.White, TextAlignment.Center, maxWidth);
+    }
+
+    private static TextLayout GetOrCreateLayout(ref CachedLayout cache, string text, double fontSize, FontWeight weight, IBrush brush, TextAlignment alignment, double maxWidth)
+    {
+        const double WidthTolerance = 0.5;
+
+        if (cache.Layout is not null
+            && cache.Text == text
+            && Math.Abs(cache.FontSize - fontSize) < double.Epsilon
+            && cache.Weight == weight
+            && ReferenceEquals(cache.Brush, brush)
+            && cache.Alignment == alignment
+            && Math.Abs(cache.MaxWidth - maxWidth) <= WidthTolerance)
+        {
+            return cache.Layout;
+        }
+
+        cache.Layout?.Dispose();
+        cache.Layout = CreateTextLayout(text, fontSize, weight, brush, alignment, maxWidth);
+        cache.Text = text;
+        cache.FontSize = fontSize;
+        cache.Weight = weight;
+        cache.Brush = brush;
+        cache.Alignment = alignment;
+        cache.MaxWidth = maxWidth;
+        return cache.Layout;
+    }
+
     private static TextLayout CreateTextLayout(string text, double fontSize, FontWeight weight, IBrush brush, TextAlignment alignment, double maxWidth)
     {
-        var typeface = new Typeface("Inter", FontStyle.Normal, weight);
+        var typeface = ResolveTypeface(weight);
         var constraint = double.IsFinite(maxWidth) && maxWidth > 0 ? maxWidth : double.PositiveInfinity;
         return new TextLayout(text, typeface, fontSize, brush, alignment, TextWrapping.NoWrap, textTrimming: null, textDecorations: null, flowDirection: FlowDirection.LeftToRight, maxWidth: constraint);
     }
+
+    private static Typeface ResolveTypeface(FontWeight weight)
+        => weight switch
+        {
+            var w when w == FontWeight.Normal => NormalTypeface,
+            var w when w == FontWeight.SemiBold => SemiBoldTypeface,
+            var w when w == FontWeight.Medium => MediumTypeface,
+            _ => new Typeface("Inter", FontStyle.Normal, weight)
+        };
 
     private static Dictionary<string, CategoryDefinition> BuildCategories()
     {
@@ -853,6 +931,29 @@ public sealed class MasterFlameChartControl : Control
 
         public CategoryDefinition WithDepth(int depth)
             => this with { Depth = depth };
+    }
+
+    private sealed class CachedLayout
+    {
+        public string? Text;
+        public double FontSize;
+        public FontWeight Weight;
+        public IBrush? Brush;
+        public TextAlignment Alignment;
+        public double MaxWidth;
+        public TextLayout? Layout;
+
+        public void Clear()
+        {
+            Layout?.Dispose();
+            Layout = null;
+            Text = null;
+            Brush = null;
+            FontSize = 0;
+            MaxWidth = 0;
+            Alignment = TextAlignment.Left;
+            Weight = FontWeight.Normal;
+        }
     }
 
     private sealed class Frame

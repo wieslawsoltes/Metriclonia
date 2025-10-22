@@ -24,6 +24,10 @@
                         <TextBlock Text="Series" FontWeight="SemiBold"/>
                         <TextBlock Text="{Binding Series.Count}"/>
                     </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Text="Viewing" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding FilteredSeries.Count}"/>
+                    </StackPanel>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <TextBlock Text="Window" FontWeight="SemiBold"/>
@@ -172,9 +176,22 @@
                 <Grid ColumnDefinitions="280,6,*">
                     <Border Grid.Column="0" Background="{DynamicResource ThemeControlLowBrush}" Padding="12">
                         <Grid RowDefinitions="Auto,*">
-                            <TextBlock Grid.Row="0" Text="Active Metrics" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,12"/>
+                            <StackPanel Grid.Row="0" Spacing="8" Margin="0,0,0,12">
+                                <TextBlock Text="Active Metrics" FontSize="18" FontWeight="SemiBold"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBox Width="180"
+                                             Watermark="Filter metrics (e.g. meter:render)"
+                                             Text="{Binding SeriesFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                    <CheckBox Content="Visible only"
+                                              IsChecked="{Binding ShowOnlyVisibleSeries, Mode=TwoWay}"
+                                              VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <TextBlock Text="Scroll to zoom • drag to pan • double-click or press Space to follow live"
+                                           FontSize="11"
+                                           Foreground="Gray"/>
+                            </StackPanel>
                             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                                <ItemsControl ItemsSource="{Binding Series}">
+                                <ItemsControl ItemsSource="{Binding FilteredSeries}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <Border Padding="12" Margin="0,0,0,8" Background="{DynamicResource ThemeBackgroundBrush}" CornerRadius="8">

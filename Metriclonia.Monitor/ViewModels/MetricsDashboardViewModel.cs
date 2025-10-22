@@ -1,10 +1,12 @@
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using Metriclonia.Contracts.Monitoring;
@@ -22,6 +24,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
     private const double MaxVisibleSeconds = 180;
 
     private readonly ObservableCollection<TimelineSeries> _series = new();
+    private readonly ObservableCollection<TimelineSeries> _filteredSeries = new();
     private readonly Dictionary<string, TimelineSeries> _seriesLookup = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<MetricSample> _pending = new();
     private readonly ObservableCollection<ActivitySeries> _activities = new();
@@ -34,6 +37,9 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
     private readonly ColorPalette _activityPalette = new();
     private readonly EventHandler _flushHandler;
     private readonly TriggerConfiguration _triggerConfiguration = new();
+    private int _pendingUiFlush;
+    private string _seriesFilter = string.Empty;
+    private bool _showOnlyVisibleSeries;
     private static readonly MetricSeed[] SeedMetrics =
     {
         new("Avalonia.Diagnostic.Meter", "avalonia.comp.render.time", "Histogram", "ms", "Duration of the compositor render pass on render thread", "Double"),
@@ -57,7 +63,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         new("Avalonia.RaisingRoutedEvent", "Routing of Avalonia routed events")
     };
     private static readonly ILogger Logger = Log.For<MetricsDashboardViewModel>();
-    private const bool EnableMetricDetailLogging = false;
+    private static readonly bool EnableMetricDetailLogging = false;
 
     private double _visibleDurationSeconds = 30;
     private double _ingressRate;
@@ -86,17 +92,54 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
 
         _series.CollectionChanged += OnSeriesCollectionChanged;
 
+        FilteredSeries = new ReadOnlyObservableCollection<TimelineSeries>(_filteredSeries);
+
         SeedKnownMetricSeries();
         SeedKnownActivitySeries();
+        ApplySeriesFilter();
     }
 
     public ObservableCollection<TimelineSeries> Series => _series;
+
+    public ReadOnlyObservableCollection<TimelineSeries> FilteredSeries { get; }
 
     public ObservableCollection<ActivitySeries> Activities => _activities;
 
     public int ListeningPort { get; }
 
     public TriggerConfiguration TriggerConfiguration => _triggerConfiguration;
+
+    public string SeriesFilter
+    {
+        get => _seriesFilter;
+        set
+        {
+            if (string.Equals(value, _seriesFilter, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _seriesFilter = value ?? string.Empty;
+            OnPropertyChanged();
+            ApplySeriesFilter();
+        }
+    }
+
+    public bool ShowOnlyVisibleSeries
+    {
+        get => _showOnlyVisibleSeries;
+        set
+        {
+            if (_showOnlyVisibleSeries == value)
+            {
+                return;
+            }
+
+            _showOnlyVisibleSeries = value;
+            OnPropertyChanged();
+            ApplySeriesFilter();
+        }
+    }
 
     public double VisibleDurationSeconds
     {
@@ -165,7 +208,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         }
 
         _pending.Enqueue(sample);
-        Dispatcher.UIThread.Post(Flush);
+        ScheduleFlush();
         _ingressCounter++;
         if (EnableMetricDetailLogging)
         {
@@ -185,15 +228,25 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         }
 
         _pendingActivities.Enqueue(sample);
-        Dispatcher.UIThread.Post(Flush);
+        ScheduleFlush();
         if (EnableMetricDetailLogging)
         {
             Logger.LogDebug("Enqueued activity {Name} duration={Duration:0.###}ms", sample.Name, sample.DurationMilliseconds);
         }
     }
 
+    private void ScheduleFlush()
+    {
+        if (Interlocked.Exchange(ref _pendingUiFlush, 1) == 0)
+        {
+            Dispatcher.UIThread.Post(Flush, DispatcherPriority.Background);
+        }
+    }
+
     private void Flush()
     {
+        Interlocked.Exchange(ref _pendingUiFlush, 0);
+
         if (EnableMetricDetailLogging)
         {
             Logger.LogTrace("Flush tick");
@@ -201,7 +254,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
 
         if (!Dispatcher.UIThread.CheckAccess())
         {
-            Dispatcher.UIThread.Post(Flush);
+            ScheduleFlush();
             return;
         }
 
@@ -279,6 +332,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
                 Logger.LogTrace("Flush appended {Count} samples (series={SeriesCount})", processed, _series.Count);
                 Logger.LogInformation("Flushed {Count} samples. Series tracked: {SeriesCount}. Ingress: {Ingress:F2}/s", processed, _series.Count, IngressRate);
             }
+            ApplySeriesFilter();
         }
     }
 
@@ -305,6 +359,7 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         var displayName = BuildDisplayName(sample, tagSignature);
         var renderMode = DetermineRenderMode(sample.InstrumentType);
         var series = new TimelineSeries(sample.MeterName, sample.InstrumentName, sample.InstrumentType, displayName, sample.Unit ?? string.Empty, sample.Description ?? string.Empty, tagSignature, renderMode, _palette.Next());
+        series.PropertyChanged += OnTimelineSeriesPropertyChanged;
         _seriesLookup[key] = series;
         _series.Add(series);
         if (_triggerConfiguration.TargetSeries is null)
@@ -317,6 +372,14 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
 
     private void OnSeriesCollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
+        if (e.OldItems is { Count: > 0 })
+        {
+            foreach (var removed in e.OldItems.OfType<TimelineSeries>())
+            {
+                removed.PropertyChanged -= OnTimelineSeriesPropertyChanged;
+            }
+        }
+
         if (_triggerConfiguration.TargetSeries is not null && !_series.Contains(_triggerConfiguration.TargetSeries))
         {
             _triggerConfiguration.TargetSeries = _series.FirstOrDefault();
@@ -325,6 +388,21 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
         if (_triggerConfiguration.TargetSeries is null && _series.Count > 0)
         {
             _triggerConfiguration.TargetSeries = _series[0];
+        }
+
+        ApplySeriesFilter();
+    }
+
+    private void OnTimelineSeriesPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!_showOnlyVisibleSeries)
+        {
+            return;
+        }
+
+        if (string.Equals(e.PropertyName, nameof(TimelineSeries.IsVisible), StringComparison.Ordinal))
+        {
+            ApplySeriesFilter();
         }
     }
 
@@ -431,21 +509,207 @@ public sealed class MetricsDashboardViewModel : INotifyPropertyChanged, IAsyncDi
     private readonly record struct ActivitySeed(string Name, string Description);
 
     private static string BuildTagSignature(Dictionary<string, string?>? tags)
+        => TagFormatter.BuildSignature(tags);
+
+    private void ApplySeriesFilter()
     {
-        if (tags is null || tags.Count == 0)
+        if (!Dispatcher.UIThread.CheckAccess())
         {
-            return string.Empty;
+            Dispatcher.UIThread.Post(ApplySeriesFilter, DispatcherPriority.Background);
+            return;
         }
 
-        var parts = new List<string>(tags.Count);
-        foreach (var kvp in tags.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+        var snapshot = new List<TimelineSeries>(_series.Count);
+        if (_series.Count == 0)
         {
-            parts.Add(string.IsNullOrWhiteSpace(kvp.Value)
-                ? kvp.Key
-                : $"{kvp.Key}={kvp.Value}");
+            SynchronizeFilteredSeries(snapshot);
+            return;
         }
 
-        return string.Join(", ", parts);
+        var filter = _seriesFilter;
+        var tokens = Tokenize(filter);
+
+        foreach (var series in _series)
+        {
+            if (_showOnlyVisibleSeries && !series.IsVisible)
+            {
+                continue;
+            }
+
+            if (!MatchesTokens(series, tokens))
+            {
+                continue;
+            }
+
+            snapshot.Add(series);
+        }
+
+        SynchronizeFilteredSeries(snapshot);
+    }
+
+    private void SynchronizeFilteredSeries(IReadOnlyList<TimelineSeries> snapshot)
+    {
+        var requiresReset = false;
+
+        if (_filteredSeries.Count != snapshot.Count)
+        {
+            requiresReset = true;
+        }
+        else
+        {
+            for (var i = 0; i < snapshot.Count; i++)
+            {
+                if (!ReferenceEquals(_filteredSeries[i], snapshot[i]))
+                {
+                    requiresReset = true;
+                    break;
+                }
+            }
+        }
+
+        if (!requiresReset)
+        {
+            return;
+        }
+
+        _filteredSeries.Clear();
+        for (var i = 0; i < snapshot.Count; i++)
+        {
+            _filteredSeries.Add(snapshot[i]);
+        }
+
+        OnPropertyChanged(nameof(FilteredSeries));
+    }
+
+    private static ReadOnlyMemory<string> Tokenize(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return ReadOnlyMemory<string>.Empty;
+        }
+
+        var parts = text.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return parts.Length == 0 ? ReadOnlyMemory<string>.Empty : new ReadOnlyMemory<string>(parts);
+    }
+
+    private static bool MatchesTokens(TimelineSeries series, ReadOnlyMemory<string> tokens)
+    {
+        if (tokens.IsEmpty)
+        {
+            return true;
+        }
+
+        var span = tokens.Span;
+        for (var i = 0; i < span.Length; i++)
+        {
+            var token = span[i];
+            if (!MatchesToken(series, token))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool MatchesToken(TimelineSeries series, string token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return true;
+        }
+
+        var comparison = StringComparison.OrdinalIgnoreCase;
+        var colonIndex = token.IndexOf(':');
+        if (colonIndex > 0 && colonIndex < token.Length - 1)
+        {
+            var qualifier = token[..colonIndex];
+            var value = token[(colonIndex + 1)..];
+
+            if (qualifier.Equals("meter", StringComparison.OrdinalIgnoreCase))
+            {
+                return Contains(series.MeterName, value, comparison);
+            }
+
+            if (qualifier.Equals("instrument", StringComparison.OrdinalIgnoreCase) || qualifier.Equals("metric", StringComparison.OrdinalIgnoreCase))
+            {
+                return Contains(series.InstrumentName, value, comparison);
+            }
+
+            if (qualifier.Equals("unit", StringComparison.OrdinalIgnoreCase))
+            {
+                return Contains(series.Unit, value, comparison);
+            }
+
+            if (qualifier.Equals("tag", StringComparison.OrdinalIgnoreCase) || qualifier.Equals("tags", StringComparison.OrdinalIgnoreCase))
+            {
+                return Contains(series.TagSignature, value, comparison);
+            }
+
+            if (qualifier.Equals("type", StringComparison.OrdinalIgnoreCase))
+            {
+                return Contains(series.InstrumentType, value, comparison);
+            }
+
+            if (qualifier.Equals("description", StringComparison.OrdinalIgnoreCase) || qualifier.Equals("desc", StringComparison.OrdinalIgnoreCase))
+            {
+                return Contains(series.Description, value, comparison);
+            }
+
+            if (qualifier.Equals("display", StringComparison.OrdinalIgnoreCase) || qualifier.Equals("name", StringComparison.OrdinalIgnoreCase))
+            {
+                return Contains(series.DisplayName, value, comparison);
+            }
+
+            // Unknown qualifier, fall back to loose match.
+        }
+
+        if (Contains(series.DisplayName, token, comparison))
+        {
+            return true;
+        }
+
+        if (Contains(series.Description, token, comparison))
+        {
+            return true;
+        }
+
+        if (Contains(series.MeterName, token, comparison))
+        {
+            return true;
+        }
+
+        if (Contains(series.InstrumentName, token, comparison))
+        {
+            return true;
+        }
+
+        if (Contains(series.TagSignature, token, comparison))
+        {
+            return true;
+        }
+
+        if (Contains(series.Unit, token, comparison))
+        {
+            return true;
+        }
+
+        return Contains(series.InstrumentType, token, comparison);
+    }
+
+    private static bool Contains(string? source, string token, StringComparison comparison)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrEmpty(source))
+        {
+            return false;
+        }
+
+        return source.IndexOf(token, comparison) >= 0;
     }
 
     public async ValueTask DisposeAsync()
