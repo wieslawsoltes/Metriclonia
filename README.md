@@ -85,4 +85,4 @@ You can adjust logging by editing `Infrastructure/Log.cs` or by replacing the lo
 
 ## License
 
-Licensed under the GNU Affero General Public License v3.0. See [LICENSE](LICENSE) for full terms.
+Licensed under the MIT. See [LICENSE](LICENSE) for full terms.
